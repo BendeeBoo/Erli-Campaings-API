@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -71.22 854.66 854.66">
+  <defs>
+    <style>
+      .cls-1 { fill: #ff6201; }
+      .cls-2 { fill: #dcfb3d; }
+    </style>
+  </defs>
+  <g>
+    <path class="cls-2" d="M507.11,0h62.66v142.44h-142.44v-62.66C427.33,35.75,463.08,0,507.11,0Z"/>
+    <rect class="cls-2" x="569.77" y="0" width="142.44" height="142.44"/>
+    <path class="cls-2" d="M712.22,0h142.44v75.2c0,37.11-30.13,67.24-67.24,67.24h-75.2V0h0Z"/>
+    <path class="cls-2" d="M712.22,142.44h57.78c46.73,0,84.67,37.94,84.67,84.67v57.78h-142.44v-142.44h0Z"/>
+    <rect class="cls-2" x="427.33" y="142.44" width="142.44" height="142.44"/>
+    <rect class="cls-2" x="427.33" y="284.89" width="142.44" height="142.44"/>
+    <rect class="cls-2" x="569.77" y="284.89" width="142.44" height="142.44"/>
+    <path class="cls-2" d="M712.22,284.89h142.44v70.97c0,39.44-32.02,71.47-71.47,71.47h-70.97v-142.44h0Z"/>
+    <rect class="cls-2" x="427.33" y="427.33" width="142.44" height="142.44"/>
+    <path class="cls-2" d="M427.33,569.77h142.44v142.44h-66.04c-42.17,0-76.4-34.23-76.4-76.4v-66.04h0Z"/>
+  </g>
+  <g>
+    <path class="cls-1" d="M142.44,0h0v142.44H0C0,63.83,63.83,0,142.44,0Z"/>
+    <rect class="cls-1" x="0" y="142.44" width="142.44" height="142.44"/>
+    <rect class="cls-1" y="284.89" width="142.44" height="142.44"/>
+    <rect class="cls-1" y="427.33" width="142.44" height="142.44"/>
+    <path class="cls-1" d="M0,569.77h142.44v142.44h0C63.83,712.22,0,648.39,0,569.77H0Z"/>
+    <rect class="cls-1" x="142.44" y="569.77" width="142.44" height="142.44"/>
+    <rect class="cls-1" x="142.44" y="284.89" width="142.44" height="142.44"/>
+    <path class="cls-1" d="M284.89,0h142.44v61.04c0,44.93-36.47,81.4-81.4,81.4h-61.04V0h0Z"/>
+    <path class="cls-1" d="M284.89,284.89h142.44v61.04c0,44.93-36.47,81.4-81.4,81.4h-61.04v-142.44h0Z"/>
+    <path class="cls-1" d="M284.89,569.77h142.44v61.04c0,44.93-36.47,81.4-81.4,81.4h-61.04v-142.44h0Z"/>
+    <rect class="cls-1" x="142.44" width="142.44" height="142.44"/>
+  </g>
+</svg>
