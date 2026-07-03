@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERLI — Заказы</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; color: #1a1a2e; font-size: 14px; }
+
+    header { background: #1a1a2e; color: #fff; padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    header h1 { font-size: 17px; font-weight: 700; }
+    .poller-bar { display: flex; align-items: center; gap: 10px; font-size: 12px; opacity: .8; }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: pulse 2s infinite; flex-shrink: 0; }
+    .pulse.error { background: #ef4444; animation: none; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    main { padding: 22px 28px; max-width: 1440px; margin: 0 auto; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 13px; margin-bottom: 20px; }
+    .card { background: #fff; border-radius: 10px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+    .card .label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: #888; margin-bottom: 5px; }
+    .card .value { font-size: 24px; font-weight: 700; }
+    .card.blue   .value { color: #2563eb; }
+    .card.green  .value { color: #16a34a; }
+    .card.red    .value { color: #dc2626; }
+    .card.yellow .value { color: #d97706; }
+
+    /* toolbar */
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 18px; }
+    .panel { background: #fff; border-radius: 10px; padding: 14px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.07); flex: 1; min-width: 260px; }
+    .panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .6px; color: #888; margin-bottom: 10px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+    .row label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #555; font-weight: 600; }
+    .row select, .row input { padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; background: #f9fafb; outline: none; min-width: 120px; }
+    .row select:focus, .row input:focus { border-color: #2563eb; background: #fff; }
+    .btn { padding: 7px 16px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; white-space: nowrap; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #e5e7eb; color: #374151; }
+    .btn-secondary:hover { background: #d1d5db; }
+    .btn-green { background: #16a34a; color: #fff; }
+    .btn-green:hover { background: #15803d; }
+    .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+    /* add order */
+    .add-row { display: flex; gap: 8px; align-items: center; }
+    .add-row input { flex: 1; padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; font-family: monospace; }
+    #add-result { font-size: 12px; margin-top: 6px; min-height: 16px; }
+    .ok  { color: #16a34a; }
+    .err { color: #dc2626; }
+
+    /* poller info */
+    .poller-info { font-size: 12px; color: #6b7280; margin-top: 8px; line-height: 1.6; }
+    .poller-info span { color: #374151; font-weight: 600; }
+
+    /* table */
+    .table-wrap { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.07); overflow: hidden; }
+    .table-top { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f0f0f0; gap: 10px; }
+    .table-top h2 { font-size: 14px; font-weight: 700; }
+    .count { font-size: 12px; color: #888; white-space: nowrap; }
+    .search-wrap { position: relative; flex: 1; max-width: 280px; }
+    .search-wrap input { width: 100%; padding: 6px 10px 6px 28px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .search-wrap::before { content: "🔍"; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; pointer-events: none; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #f8fafc; }
+    thead th { text-align: left; padding: 9px 13px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; font-weight: 700; border-bottom: 1px solid #e5e7eb; cursor: pointer; user-select: none; white-space: nowrap; }
+    thead th:hover { color: #2563eb; }
+    thead th .si { margin-left: 3px; opacity: .4; }
+    thead th.sorted .si { opacity: 1; color: #2563eb; }
+    tbody tr { border-bottom: 1px solid #f3f4f6; transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody td { padding: 10px 13px; vertical-align: middle; }
+
+    .oid { font-weight: 700; font-size: 13px; font-family: monospace; }
+    .buyer { font-weight: 600; }
+    .city  { color: #6b7280; font-size: 12px; }
+    .product-name { font-size: 13px; line-height: 1.4; max-width: 300px; }
+    .sku { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+    .total { font-weight: 700; text-align: right; white-space: nowrap; }
+
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+    .badge-purchased { background: #dcfce7; color: #15803d; }
+    .badge-cancelled { background: #fee2e2; color: #b91c1c; }
+    .badge-pending   { background: #fef9c3; color: #a16207; }
+    .sbadge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; background: #f1f5f9; color: #475569; }
+
+    .empty { text-align: center; padding: 60px 20px; color: #9ca3af; }
+    .empty .icon { font-size: 38px; margin-bottom: 10px; }
+
+    .del-btn { border: none; background: none; cursor: pointer; font-size: 14px; opacity: .35; transition: opacity .15s; }
+    .del-btn:hover { opacity: 1; }
+
+    /* toast */
+    #toast { position: fixed; bottom: 24px; right: 24px; background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ERLI — Монитор заказов</h1>
+  <nav style="display:flex;gap:16px;margin-right:20px;">
+    <a href="/" style="color:#93c5fd;font-size:13px;text-decoration:none;">Заказы</a>
+    <a href="/analytics" style="color:#93c5fd;font-size:13px;text-decoration:none;">Реклама</a>
+  </nav>
+  <div class="poller-bar">
+    <div class="pulse {% if poller.error %}error{% endif %}" id="pulse-dot"></div>
+    <span id="poller-label">
+      {% if poller.error %}Ошибка поллера{% else %}Поллинг inbox активен{% endif %}
+    </span>
+    <button class="btn btn-secondary btn-sm" onclick="manualPoll()" id="refresh-btn">⟳ Обновить</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="card blue">
+      <div class="label">Всего</div>
+      <div class="value" id="s-total">{{ stats.total }}</div>
+    </div>
+    <div class="card green">
+      <div class="label">Оплачено</div>
+      <div class="value" id="s-purchased">{{ stats.purchased }}</div>
+    </div>
+    <div class="card red">
+      <div class="label">Отменено</div>
+      <div class="value" id="s-cancelled">{{ stats.cancelled }}</div>
+    </div>
+    <div class="card yellow">
+      <div class="label">Ожидает</div>
+      <div class="value" id="s-pending">{{ stats.pending }}</div>
+    </div>
+    <div class="card green" style="grid-column:span 2; min-width:0;">
+      <div class="label">Выручка (оплачено)</div>
+      <div class="value" style="font-size:20px;" id="s-revenue">{{ stats.revenue }}</div>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+
+    <!-- Filters -->
+    <div class="panel" style="flex:2;">
+      <h3>Фильтры</h3>
+      <form class="row" method="get">
+        <label>Статус
+          <select name="status">
+            <option value="" {% if not status_filter %}selected{% endif %}>Все</option>
+            <option value="purchased" {% if status_filter=='purchased' %}selected{% endif %}>Оплачен</option>
+            <option value="cancelled" {% if status_filter=='cancelled' %}selected{% endif %}>Отменён</option>
+            <option value="pending"   {% if status_filter=='pending'   %}selected{% endif %}>Ожидает</option>
+          </select>
+        </label>
+        <label>После даты
+          <input type="date" name="after" value="{{ after_filter }}">
+        </label>
+        <label>Лимит
+          <select name="limit">
+            {% for n in [50, 100, 200, 500] %}
+            <option value="{{ n }}" {% if limit==n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <div style="display:flex;gap:6px;align-items:flex-end;">
+          <button type="submit" class="btn btn-primary">Применить</button>
+          <a href="/"><button type="button" class="btn btn-secondary">Сброс</button></a>
+        </div>
+      </form>
+    </div>
+
+    <!-- Add order manually -->
+    <div class="panel" style="flex:1;">
+      <h3>Добавить заказ по ID</h3>
+      <div class="add-row">
+        <input type="text" id="order-id-input" placeholder="260615x48485" maxlength="20">
+        <button class="btn btn-green btn-sm" onclick="addOrder()">+ Добавить</button>
+      </div>
+      <div id="add-result"></div>
+
+      <!-- Poller status -->
+      <div class="poller-info" id="poller-info">
+        Последний опрос: <span>{{ poller.last_poll }}</span><br>
+        {% if poller.last_event != '—' %}
+        Последнее событие: <span>{{ poller.last_event }}</span><br>
+        {% endif %}
+        {% if poller.error %}
+        Ошибка: <span style="color:#dc2626;">{{ poller.error }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Maintenance -->
+    <div class="panel" style="flex:1;">
+      <h3>Обслуживание</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn btn-primary btn-sm" id="refresh-statuses-btn" onclick="refreshStatuses()">
+          ⟳ Обновить статусы заказов
+        </button>
+        <div class="add-row">
+          <input type="date" id="delete-before-date" style="flex:1;">
+          <button class="btn btn-sm" style="background:#dc2626;color:#fff;" onclick="deleteBefore()">
+            🗑 Удалить до даты
+          </button>
+        </div>
+        <div id="maint-result" style="font-size:12px;min-height:16px;"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <div class="table-top">
+      <h2>Заказы</h2>
+      <div class="search-wrap">
+        <input type="text" id="search" placeholder="Поиск по покупателю, товару, ID…" oninput="filterTable()">
+      </div>
+      <span class="count" id="visible-count">{{ orders|length }} записей</span>
+    </div>
+
+    {% if orders %}
+    <table id="orders-table">
+      <thead>
+        <tr>
+          <th onclick="sortTable(0)">ID заказа <span class="si">↕</span></th>
+          <th onclick="sortTable(1)">Статус <span class="si">↕</span></th>
+          <th onclick="sortTable(2)">Дата <span class="si">↕</span></th>
+          <th onclick="sortTable(3)">Покупатель <span class="si">↕</span></th>
+          <th>Товары / SKU</th>
+          <th onclick="sortTable(5)">Отправка <span class="si">↕</span></th>
+          <th onclick="sortTable(6)" style="text-align:right;">Сумма <span class="si">↕</span></th>
+          <th style="width:40px;"></th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        {% for o in orders %}
+        <tr>
+          <td><span class="oid">{{ o.id }}</span></td>
+          <td>
+            <span class="badge badge-{{ o.status }}">
+              {% if o.status == 'purchased' %}Оплачен
+              {% elif o.status == 'cancelled' %}Отменён
+              {% elif o.status == 'pending' %}Ожидает
+              {% else %}{{ o.status }}{% endif %}
+            </span>
+          </td>
+          <td style="white-space:nowrap;color:#6b7280;">{{ o.date_fmt }}</td>
+          <td>
+            <div class="buyer">{{ o.buyer_name }}</div>
+            <div class="city">{{ o.city }}</div>
+          </td>
+          <td>
+            <div class="product-name">{{ o.products }}</div>
+            {% if o.skus %}<div class="sku">{{ o.skus }}</div>{% endif %}
+          </td>
+          <td><span class="sbadge">{{ o.seller_status_pl }}</span></td>
+          <td class="total">{{ o.total_fmt }}</td>
+          <td style="text-align:center;">
+            <button class="del-btn" title="Удалить заказ" onclick="deleteOrder('{{ o.id }}')">🗑</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">
+      <div class="icon">📭</div>
+      <div>Заказов нет. Добавьте вручную или дождитесь новых через inbox.</div>
+    </div>
+    {% endif %}
+  </div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+  // ── Toast ──
+  function toast(msg, ms=2500) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), ms);
+  }
+
+  // ── Manual inbox poll ──
+  async function manualPoll() {
+    const btn = document.getElementById("refresh-btn");
+    btn.disabled = true; btn.textContent = "⟳ Опрос…";
+    try {
+      const r = await fetch("/api/poll", {method:"POST"});
+      const d = await r.json();
+      if (d.error) { toast("Ошибка: " + d.error, 4000); }
+      else if (d.events === 0) { toast("Нет новых событий"); }
+      else { toast(`+${d.orders} заказов из inbox`); setTimeout(() => location.reload(), 1000); }
+
+      // Refresh poller info
+      const ps = await (await fetch("/api/poller")).json();
+      document.getElementById("poller-info").innerHTML =
+        `Последний опрос: <span>${ps.last_poll}</span><br>` +
+        (ps.last_event !== "—" ? `Последнее событие: <span>${ps.last_event}</span><br>` : "") +
+        (ps.error ? `Ошибка: <span style="color:#dc2626;">${ps.error}</span>` : "");
+    } finally {
+      btn.disabled = false; btn.textContent = "⟳ Обновить";
+    }
+  }
+
+  // ── Add order by ID ──
+  async function addOrder() {
+    const input  = document.getElementById("order-id-input");
+    const result = document.getElementById("add-result");
+    const id = input.value.trim();
+    if (!id) { result.innerHTML = '<span class="err">Введите ID</span>'; return; }
+
+    result.innerHTML = "Загружаю…";
+    try {
+      const r = await fetch("/api/order/add", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({id})
+      });
+      const d = await r.json();
+      if (d.error) {
+        result.innerHTML = `<span class="err">${d.error}</span>`;
+      } else {
+        result.innerHTML = `<span class="ok">✓ Заказ ${d.id} добавлен (${d.status})</span>`;
+        input.value = "";
+        setTimeout(() => location.reload(), 800);
+      }
+    } catch(e) {
+      result.innerHTML = `<span class="err">Ошибка сети</span>`;
+    }
+  }
+
+  document.getElementById("order-id-input").addEventListener("keydown", e => {
+    if (e.key === "Enter") addOrder();
+  });
+
+  // ── Refresh order statuses ──
+  async function refreshStatuses() {
+    const btn = document.getElementById("refresh-statuses-btn");
+    const res = document.getElementById("maint-result");
+    btn.disabled = true; btn.textContent = "⟳ Обновляю…";
+    res.innerHTML = "Опрашиваю API по каждому заказу, это может занять до минуты…";
+    try {
+      const r = await fetch("/api/orders/refresh", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({days: 60})
+      });
+      const d = await r.json();
+      if (d.error) { res.innerHTML = `<span class="err">${d.error}</span>`; }
+      else {
+        res.innerHTML = `<span class="ok">✓ Проверено: ${d.checked}, изменилось: ${d.updated}</span>`;
+        if (d.updated > 0) setTimeout(() => location.reload(), 1200);
+      }
+    } catch { res.innerHTML = '<span class="err">Ошибка сети</span>'; }
+    finally { btn.disabled = false; btn.textContent = "⟳ Обновить статусы заказов"; }
+  }
+
+  // ── Delete single order ──
+  async function deleteOrder(id) {
+    if (!confirm(`Удалить заказ ${id} из локальной базы?`)) return;
+    try {
+      const r = await fetch("/api/order/delete", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({id})
+      });
+      const d = await r.json();
+      if (d.error) { toast("Ошибка: " + d.error, 3500); }
+      else { toast(`Заказ ${id} удалён`); setTimeout(() => location.reload(), 700); }
+    } catch { toast("Ошибка сети", 3500); }
+  }
+
+  // ── Bulk delete before date ──
+  async function deleteBefore() {
+    const date = document.getElementById("delete-before-date").value;
+    const res  = document.getElementById("maint-result");
+    if (!date) { res.innerHTML = '<span class="err">Выберите дату</span>'; return; }
+    if (!confirm(`Удалить из локальной базы ВСЕ заказы, созданные до ${date}?`)) return;
+    try {
+      const r = await fetch("/api/orders/delete-before", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({before: date})
+      });
+      const d = await r.json();
+      if (d.error) { res.innerHTML = `<span class="err">${d.error}</span>`; }
+      else {
+        res.innerHTML = `<span class="ok">✓ Удалено заказов: ${d.deleted}</span>`;
+        setTimeout(() => location.reload(), 1200);
+      }
+    } catch { res.innerHTML = '<span class="err">Ошибка сети</span>'; }
+  }
+
+  // ── Search ──
+  function filterTable() {
+    const q = document.getElementById("search").value.toLowerCase();
+    const rows = document.querySelectorAll("#table-body tr");
+    let n = 0;
+    rows.forEach(r => {
+      const show = !q || r.textContent.toLowerCase().includes(q);
+      r.style.display = show ? "" : "none";
+      if (show) n++;
+    });
+    document.getElementById("visible-count").textContent = n + " записей";
+  }
+
+  // ── Sort ──
+  let sortCol = -1, sortAsc = true;
+  function sortTable(col) {
+    const tbody = document.getElementById("table-body");
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll("tr"));
+    sortAsc = sortCol === col ? !sortAsc : true;
+    sortCol = col;
+    rows.sort((a, b) => {
+      const av = a.cells[col].textContent.trim();
+      const bv = b.cells[col].textContent.trim();
+      const an = parseFloat(av.replace(/[^\d.,]/g,"").replace(",","."));
+      const bn = parseFloat(bv.replace(/[^\d.,]/g,"").replace(",","."));
+      if (!isNaN(an) && !isNaN(bn)) return sortAsc ? an - bn : bn - an;
+      return sortAsc ? av.localeCompare(bv, "ru") : bv.localeCompare(av, "ru");
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    document.querySelectorAll("thead th").forEach((th, i) => {
+      th.classList.toggle("sorted", i === col);
+      const si = th.querySelector(".si");
+      if (si) si.textContent = i === col ? (sortAsc ? "↑" : "↓") : "↕";
+    });
+  }
+
+  // ── Auto-refresh every 60s ──
+  setTimeout(() => location.reload(), 60000);
+</script>
+
+</body>
+</html>

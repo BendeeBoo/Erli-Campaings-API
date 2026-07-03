@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERLI — Аналитика рекламы</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; color: #1a1a2e; font-size: 14px; }
+
+    header { background: #1a1a2e; color: #fff; padding: 14px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    header h1 { font-size: 17px; font-weight: 700; }
+    nav a { color: #93c5fd; font-size: 13px; text-decoration: none; margin-left: 20px; }
+    nav a:hover { color: #fff; }
+    nav a.active { color: #fff; font-weight: 700; }
+
+    main { padding: 22px 28px; max-width: 1400px; margin: 0 auto; }
+
+    /* ── Upload bar ── */
+    .upload-bar { background: #fff; border-radius: 10px; padding: 14px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 18px; }
+    .upload-bar h3 { font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .file-btn { padding: 7px 14px; background: #2563eb; color: #fff; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .file-btn:hover { background: #1d4ed8; }
+    input[type=file] { display: none; }
+    select.file-sel { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; max-width: 340px; }
+    #upload-status { font-size: 12px; color: #6b7280; }
+    .ok  { color: #16a34a !important; font-weight: 600; }
+    .err { color: #dc2626 !important; font-weight: 600; }
+
+    /* ── Date filter ── */
+    .date-bar { background: #fff; border-radius: 10px; padding: 14px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); margin-bottom: 18px; }
+    .date-bar-inner { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+    .date-bar label { font-size: 12px; font-weight: 600; color: #555; display: flex; flex-direction: column; gap: 3px; }
+    .date-bar input[type=date] { padding: 6px 9px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .date-bar input[type=date]:focus { border-color: #2563eb; outline: none; }
+    .presets { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-end; }
+    .preset-btn { padding: 6px 13px; border: 1px solid #d1d5db; border-radius: 20px; font-size: 12px; cursor: pointer; background: #fff; white-space: nowrap; transition: all .15s; }
+    .preset-btn:hover, .preset-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .btn-apply { padding: 7px 16px; background: #2563eb; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-apply:hover { background: #1d4ed8; }
+    .period-badge { background: #eff6ff; color: #2563eb; border-radius: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 2px; margin-bottom: 18px; border-bottom: 2px solid #e5e7eb; }
+    .tab { padding: 10px 20px; font-size: 14px; font-weight: 600; color: #6b7280; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .tab:hover { color: #374151; }
+    .tab.active { color: #2563eb; border-bottom-color: #2563eb; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── KPI cards ── */
+    .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+    .kpi { background: #fff; border-radius: 12px; padding: 22px 24px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+    .kpi .label { font-size: 12px; text-transform: uppercase; letter-spacing: .7px; color: #888; margin-bottom: 8px; }
+    .kpi .value { font-size: 32px; font-weight: 800; line-height: 1; }
+    .kpi .sub   { font-size: 12px; color: #9ca3af; margin-top: 6px; }
+    .kpi.blue   .value { color: #2563eb; }
+    .kpi.green  .value { color: #16a34a; }
+    .kpi.orange .value { color: #d97706; }
+    .kpi.purple .value { color: #7c3aed; }
+    .kpi.red    .value { color: #dc2626; }
+    .kpi.teal   .value { color: #0891b2; }
+
+    /* ROAS coloring */
+    .roas-great { color: #16a34a !important; }
+    .roas-good  { color: #65a30d !important; }
+    .roas-ok    { color: #d97706 !important; }
+    .roas-bad   { color: #dc2626 !important; }
+
+    /* ── Detail table ── */
+    .table-wrap { background: #fff; border-radius: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.07); overflow: hidden; }
+    .table-top { display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f0f0f0; flex-wrap: wrap; gap: 8px; }
+    .table-top h2 { font-size: 14px; font-weight: 700; }
+    .toggle-wrap { display: flex; gap: 5px; }
+    .tog { padding: 4px 11px; border: 1px solid #d1d5db; border-radius: 20px; font-size: 12px; cursor: pointer; background: #fff; }
+    .tog.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead { background: #f8fafc; }
+    thead th { text-align: left; padding: 9px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: #6b7280; font-weight: 700; border-bottom: 1px solid #e5e7eb; white-space: nowrap; cursor: pointer; user-select: none; }
+    thead th:hover { color: #2563eb; }
+    thead th .si { margin-left: 3px; opacity: .4; }
+    thead th.sorted .si { opacity: 1; color: #2563eb; }
+    tbody tr { border-bottom: 1px solid #f3f4f6; transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody td { padding: 10px 12px; vertical-align: middle; }
+    tfoot td { padding: 10px 12px; font-weight: 700; background: #f8fafc; border-top: 2px solid #e5e7eb; }
+
+    .pname { max-width: 240px; font-size: 13px; line-height: 1.4; }
+    .tag { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-top: 3px; }
+    .tag-gh  { background: #dcfce7; color: #15803d; }
+    .tag-acc { background: #f1f5f9; color: #64748b; }
+    .num  { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .bold { font-weight: 700; }
+    .dim  { color: #d1d5db; }
+    .tr-bad { color: #dc2626; font-weight: 600; }
+    .tr-good { color: #16a34a; font-weight: 700; }
+    .tr-ok   { color: #d97706; font-weight: 700; }
+
+    .empty { text-align: center; padding: 60px; color: #9ca3af; }
+    .empty .icon { font-size: 38px; margin-bottom: 12px; }
+
+    #toast { position: fixed; bottom: 24px; right: 24px; background: #1a1a2e; color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 999; }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>ERLI — Аналитика рекламы</h1>
+  <nav>
+    <a href="/">Заказы</a>
+    <a href="/analytics" class="active">Реклама</a>
+  </nav>
+</header>
+
+<main>
+
+  <!-- Upload bar -->
+  <div class="upload-bar">
+    <h3>Файл выгрузки:</h3>
+    <label class="file-btn" for="xlsx-input">+ Загрузить xlsx</label>
+    <input type="file" id="xlsx-input" accept=".xlsx" onchange="uploadFile(this)">
+    {% if files %}
+    <select class="file-sel" onchange="switchFile(this.value)">
+      {% for f in files %}
+      <option value="{{ f }}" {% if f == selected %}selected{% endif %}>{{ f }}</option>
+      {% endfor %}
+    </select>
+    {% endif %}
+    <span id="upload-status">{% if not files %}Загрузите файл{% endif %}</span>
+    {% if report %}
+    <span class="period-badge">Данные: {{ file_min }} — {{ file_max }}</span>
+    {% endif %}
+  </div>
+
+  {% if report %}
+
+  <!-- Date range filter -->
+  <div class="date-bar">
+    <form class="date-bar-inner" method="get" id="date-form">
+      <input type="hidden" name="file" value="{{ selected }}">
+      <div class="presets" id="presets">
+        <span style="font-size:12px;font-weight:600;color:#555;align-self:center;">Период:</span>
+        <button type="button" class="preset-btn" data-days="7">7 дней</button>
+        <button type="button" class="preset-btn" data-days="14">14 дней</button>
+        <button type="button" class="preset-btn" data-days="30">30 дней</button>
+        <button type="button" class="preset-btn" data-all="1">Всё</button>
+      </div>
+      <label>С
+        <input type="date" name="from" id="date-from"
+               value="{{ date_from }}" min="{{ file_min }}" max="{{ file_max }}">
+      </label>
+      <label>По
+        <input type="date" name="to" id="date-to"
+               value="{{ date_to }}" min="{{ file_min }}" max="{{ file_max }}">
+      </label>
+      <button type="submit" class="btn-apply">Применить</button>
+      {% if date_from or date_to %}
+      <span class="period-badge">{{ report.period.from }} — {{ report.period.to }}</span>
+      {% endif %}
+    </form>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('summary', this)">Сводка</div>
+    <div class="tab" onclick="switchTab('details', this)">По офертам</div>
+  </div>
+
+  <!-- Tab: Summary -->
+  <div class="tab-content active" id="tab-summary">
+    <div class="kpis">
+      <div class="kpi blue">
+        <div class="label">Показы</div>
+        <div class="value">{{ "{:,}".format(report.totals.impressions).replace(",", " ") }}</div>
+        <div class="sub">за выбранный период</div>
+      </div>
+      <div class="kpi orange">
+        <div class="label">Затраты на рекламу</div>
+        <div class="value">{{ "%.2f"|format(report.totals.cost) }}</div>
+        <div class="sub">злотых</div>
+      </div>
+      <div class="kpi green">
+        <div class="label">Выручка (теплицы)</div>
+        <div class="value">{{ "%.0f"|format(report.totals.greenhouse_revenue) }}</div>
+        <div class="sub">без отмен и ожидания оплаты</div>
+      </div>
+      <div class="kpi purple">
+        <div class="label">Факт. РОАС</div>
+        <div class="value {% if report.totals.roas %}{% if report.totals.roas >= 10 %}roas-great{% elif report.totals.roas >= 5 %}roas-good{% elif report.totals.roas >= 2 %}roas-ok{% else %}roas-bad{% endif %}{% endif %}">
+          {% if report.totals.roas %}{{ report.totals.roas }}x{% else %}—{% endif %}
+        </div>
+        <div class="sub">только теплицы, без аксессуаров</div>
+      </div>
+      <div class="kpi teal">
+        <div class="label">Продано теплиц</div>
+        <div class="value">{{ report.totals.units_sold }}</div>
+        <div class="sub">штук оплачено</div>
+      </div>
+      <div class="kpi red">
+        <div class="label">Цена одной продажи</div>
+        <div class="value">{% if report.totals.cost_per_sale %}{{ "%.2f"|format(report.totals.cost_per_sale) }}{% else %}—{% endif %}</div>
+        <div class="sub">затраты / кол-во теплиц</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: Details per product -->
+  <div class="tab-content" id="tab-details">
+    <div class="table-wrap">
+      <div class="table-top">
+        <h2>По офертам</h2>
+        <div class="toggle-wrap">
+          <button class="tog active" onclick="filterRows('all',this)">Все</button>
+          <button class="tog" onclick="filterRows('greenhouse',this)">Теплицы</button>
+          <button class="tog" onclick="filterRows('accessory',this)">Аксессуары</button>
+        </div>
+      </div>
+      <table id="det-table">
+        <thead>
+          <tr>
+            <th>Оферта</th>
+            <th class="num" onclick="sortTable(1)">Показы <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(2)">Клики <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(3)">Затраты <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(4)">Заказов <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(5)">Отмен <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(6)">Продано <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(7)">Выручка <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(8)">РОАС <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(9)">Цена прод. <span class="si">↕</span></th>
+          </tr>
+        </thead>
+        <tbody id="det-body">
+          {% for r in report.rows %}
+          <tr data-type="{{ 'greenhouse' if r.is_greenhouse == True else 'accessory' }}">
+            <td>
+              <div class="pname">{{ r.product_name }}</div>
+              <span class="tag {{ 'tag-gh' if r.is_greenhouse == True else 'tag-acc' }}">
+                {{ 'Теплица' if r.is_greenhouse == True else 'Аксессуар' }}
+              </span>
+            </td>
+            <td class="num">{{ "{:,}".format(r.impressions).replace(",", " ") }}</td>
+            <td class="num">{{ r.clicks }}</td>
+            <td class="num bold">{{ "%.2f"|format(r.cost) }} zł</td>
+            <td class="num">{{ r.orders_total }}</td>
+            <td class="num {% if r.orders_cancelled > 0 %}tr-bad{% endif %}">{{ r.orders_cancelled }}</td>
+            <td class="num bold">{{ r.units_sold }}</td>
+            <td class="num">{% if r.greenhouse_revenue > 0 %}{{ "%.0f"|format(r.greenhouse_revenue) }} zł{% else %}<span class="dim">—</span>{% endif %}</td>
+            <td class="num">
+              {% if r.roas %}
+              <span class="{% if r.roas >= 10 %}tr-good{% elif r.roas >= 5 %}tr-ok{% else %}tr-bad{% endif %}">
+                {{ r.roas }}x
+              </span>
+              {% else %}<span class="dim">—</span>{% endif %}
+            </td>
+            <td class="num">{% if r.cost_per_sale %}{{ "%.2f"|format(r.cost_per_sale) }} zł{% else %}<span class="dim">—</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>ИТОГО (теплицы)</td>
+            <td class="num">{{ "{:,}".format(report.totals.impressions).replace(",", " ") }}</td>
+            <td class="num">—</td>
+            <td class="num">{{ "%.2f"|format(report.totals.cost) }} zł</td>
+            <td class="num">—</td><td class="num">—</td>
+            <td class="num">{{ report.totals.units_sold }}</td>
+            <td class="num">{{ "%.0f"|format(report.totals.greenhouse_revenue) }} zł</td>
+            <td class="num">{% if report.totals.roas %}{{ report.totals.roas }}x{% else %}—{% endif %}</td>
+            <td class="num">{% if report.totals.cost_per_sale %}{{ "%.2f"|format(report.totals.cost_per_sale) }} zł{% else %}—{% endif %}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+
+  {% else %}
+  <div class="empty">
+    <div class="icon">📊</div>
+    <div>Загрузите файл выгрузки рекламы (.xlsx) чтобы увидеть отчёт</div>
+  </div>
+  {% endif %}
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+  const FILE_MIN = "{{ file_min }}";
+  const FILE_MAX = "{{ file_max }}";
+
+  // ── Tabs ──
+  function switchTab(id, el) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+    el.classList.add("active");
+    document.getElementById("tab-" + id).classList.add("active");
+  }
+
+  // ── Date presets ──
+  document.querySelectorAll(".preset-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".preset-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+
+      if (btn.dataset.all) {
+        document.getElementById("date-from").value = "";
+        document.getElementById("date-to").value   = "";
+        return;
+      }
+      const days  = parseInt(btn.dataset.days);
+      const toDate = new Date(FILE_MAX);
+      const frDate = new Date(toDate);
+      frDate.setDate(frDate.getDate() - days + 1);
+      document.getElementById("date-from").value = frDate.toISOString().slice(0, 10);
+      document.getElementById("date-to").value   = toDate.toISOString().slice(0, 10);
+    });
+  });
+
+  // Highlight active preset on load
+  (function() {
+    const from = document.getElementById("date-from").value;
+    const to   = document.getElementById("date-to").value;
+    if (!from && !to) {
+      document.querySelector("[data-all]").classList.add("active");
+      return;
+    }
+    if (to === FILE_MAX && from) {
+      const diff = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+      document.querySelectorAll("[data-days]").forEach(b => {
+        if (parseInt(b.dataset.days) === diff) b.classList.add("active");
+      });
+    }
+  })();
+
+  // ── Upload ──
+  function toast(msg, ms=3000) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), ms);
+  }
+
+  async function uploadFile(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const status = document.getElementById("upload-status");
+    status.textContent = "Загружаю…"; status.className = "";
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const r = await fetch("/api/upload-xlsx", { method: "POST", body: form });
+      const d = await r.json();
+      if (d.error) { status.textContent = "Ошибка: " + d.error; status.className = "err"; }
+      else {
+        const o = d.orders;
+        status.textContent = `✓ ${o.fetched} новых заказов загружено`;
+        status.className = "ok";
+        setTimeout(() => location.href = "/analytics?file=" + encodeURIComponent(d.filename), 700);
+      }
+    } catch { status.textContent = "Ошибка сети"; status.className = "err"; }
+  }
+
+  function switchFile(f) {
+    location.href = "/analytics?file=" + encodeURIComponent(f);
+  }
+
+  // ── Filter rows ──
+  function filterRows(type, btn) {
+    document.querySelectorAll(".tog").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll("#det-body tr").forEach(tr => {
+      tr.style.display = (type === "all" || tr.dataset.type === type) ? "" : "none";
+    });
+  }
+
+  // ── Sort table ──
+  let sc = -1, sa = true;
+  function sortTable(col) {
+    const tbody = document.getElementById("det-body");
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll("tr:not([style*='none'])"));
+    sa = sc === col ? !sa : true; sc = col;
+    rows.sort((a, b) => {
+      const av = a.cells[col].textContent.trim().replace(/[^\d.,]/g,"").replace(",",".");
+      const bv = b.cells[col].textContent.trim().replace(/[^\d.,]/g,"").replace(",",".");
+      const an = parseFloat(av), bn = parseFloat(bv);
+      if (!isNaN(an) && !isNaN(bn)) return sa ? an-bn : bn-an;
+      return sa ? av.localeCompare(bv,"ru") : bv.localeCompare(av,"ru");
+    });
+    rows.forEach(r => tbody.appendChild(r));
+    document.querySelectorAll("#det-table thead th").forEach((th, i) => {
+      th.classList.toggle("sorted", i === col);
+      const si = th.querySelector(".si");
+      if (si) si.textContent = i === col ? (sa ? "↑" : "↓") : "↕";
+    });
+  }
+</script>
+
+</body>
+</html>

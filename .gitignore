@@ -1,0 +1,17 @@
+# Secrets
+config.json
+
+# Local data
+erli.db
+uploads/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE / OS
+.claude/
+.vscode/
+Thumbs.db
+desktop.ini
