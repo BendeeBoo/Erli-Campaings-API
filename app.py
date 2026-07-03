@@ -4,15 +4,15 @@ import webbrowser
 import os
 from datetime import datetime, timezone
 
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import (Flask, render_template, request, jsonify,
+                   redirect, url_for, session)
 
 import db
 import poller
 import report as rpt
-from erli_api import get_order, search_orders
+from erli_api import get_order
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +22,39 @@ logging.basicConfig(
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB
+app.secret_key = os.environ.get("SECRET_KEY", "erli-local-dev-secret")
+
+# Password protection: set APP_PASSWORD env var on the server to enable.
+# Locally (no env var) the app stays open as before.
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+
+@app.before_request
+def require_login():
+    if not APP_PASSWORD:
+        return
+    if request.endpoint in ("login", "static"):
+        return
+    if not session.get("authed"):
+        return redirect(url_for("login", next=request.path))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        if request.form.get("password", "") == APP_PASSWORD:
+            session["authed"] = True
+            session.permanent = True
+            return redirect(request.args.get("next") or url_for("index"))
+        error = "Неверный пароль"
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
 
 # API sellerStatus → Polish label (as shown in the ERLI shop panel)
@@ -164,11 +197,7 @@ def api_stats():
 
 @app.route("/analytics")
 def analytics():
-    # List uploaded xlsx files
-    files = sorted(
-        [f for f in os.listdir(UPLOAD_DIR) if f.endswith(".xlsx")],
-        reverse=True,
-    )
+    files = db.list_xlsx()
     selected  = request.args.get("file", files[0] if files else None)
     date_from = request.args.get("from", "")
     date_to   = request.args.get("to",   "")
@@ -177,10 +206,10 @@ def analytics():
     error = None
 
     if selected:
-        path = os.path.join(UPLOAD_DIR, selected)
-        if os.path.exists(path):
+        content = db.get_xlsx(selected)
+        if content:
             try:
-                df = rpt.load_xlsx(path)
+                df = rpt.load_xlsx(content)
                 import pandas as pd
                 dates = pd.to_datetime(df["Data"])
                 file_min = str(dates.min())[:10]
@@ -212,11 +241,12 @@ def upload_xlsx():
     if not f or not f.filename.endswith(".xlsx"):
         return jsonify({"error": "Need an .xlsx file"}), 400
 
-    save_path = os.path.join(UPLOAD_DIR, f.filename)
-    f.save(save_path)
+    content = f.read()
+    now = datetime.now(timezone.utc).isoformat()
+    db.save_xlsx(f.filename, content, now)
 
     try:
-        df = rpt.load_xlsx(save_path)
+        df = rpt.load_xlsx(content)
         result = rpt.import_orders_from_xlsx(df)
         return jsonify({"ok": True, "filename": f.filename, "orders": result})
     except Exception as e:
@@ -230,26 +260,30 @@ def api_poller():
 
 # ── Startup ──────────────────────────────────────────────────────────────────
 
-def seed_db():
-    """
-    On first launch: load orders from _search into DB as historical seed.
-    (Returns 2021 data for this account — still useful as baseline.)
-    """
-    existing = db.get_stats().get("total") or 0
-    if existing > 0:
+def _import_local_uploads():
+    """One-time migration: move xlsx files from uploads/ into the DB."""
+    if not os.path.isdir(UPLOAD_DIR):
         return
-    logging.getLogger("seed").info("Seeding DB from /orders/_search …")
-    orders = search_orders(limit=100)
-    for o in orders:
-        db.upsert_order(o)
-    logging.getLogger("seed").info(f"Seeded {len(orders)} orders")
+    existing = set(db.list_xlsx())
+    for fname in os.listdir(UPLOAD_DIR):
+        if fname.endswith(".xlsx") and fname not in existing:
+            path = os.path.join(UPLOAD_DIR, fname)
+            with open(path, "rb") as fh:
+                db.save_xlsx(fname, fh.read(),
+                             datetime.now(timezone.utc).isoformat())
+            logging.getLogger("startup").info(f"Imported {fname} into DB")
+
+
+def _startup():
+    db.init_db()
+    _import_local_uploads()
+    poller.start()
+
+
+_startup()  # runs on import — works under gunicorn and local `python app.py`
 
 
 if __name__ == "__main__":
-    db.init_db()
-    seed_db()
-    poller.start()
-
     threading.Timer(1.5, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
     print("\n  ERLI Monitor →  http://127.0.0.1:5000\n")
     app.run(debug=False, port=5000)

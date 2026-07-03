@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: erli-monitor
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # Single worker so only one inbox poller runs; threads handle parallel requests
+    startCommand: gunicorn -w 1 --threads 8 --timeout 120 -b 0.0.0.0:$PORT app:app
+    envVars:
+      - key: ERLI_API_KEY
+        sync: false
+      - key: APP_PASSWORD
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true

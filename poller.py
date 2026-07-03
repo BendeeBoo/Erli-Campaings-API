@@ -113,18 +113,14 @@ def refresh_statuses(days: int = REFRESH_DAYS) -> dict:
     ids = get_order_ids_since(cutoff)
     checked, updated, errors = 0, 0, 0
 
-    from db import get_conn
+    from db import get_order_row
     for oid in ids:
         try:
             order = get_order(oid)
             if not order:
                 errors += 1
                 continue
-            with get_conn() as conn:
-                row = conn.execute(
-                    "SELECT status, seller_status FROM orders WHERE id = ?",
-                    (oid,)
-                ).fetchone()
+            row = get_order_row(oid)
             old = (row["status"], row["seller_status"]) if row else (None, None)
             new = (order.get("status"), order.get("sellerStatus") or "")
             upsert_order(order)

@@ -2,12 +2,12 @@
 Report engine: joins xlsx ad data with orders from DB.
 """
 
-import re
+import io
 import json
 import pandas as pd
-from pathlib import Path
 
-from db import upsert_order, get_conn
+import db
+from db import upsert_order
 from erli_api import get_order
 
 GREENHOUSE_KEYWORDS = ["szklarnia", "tunel", "domek"]
@@ -30,8 +30,11 @@ def parse_order_ids(cell) -> list[str]:
     return [x.strip() for x in str(cell).split(",") if x.strip()]
 
 
-def load_xlsx(path: str) -> pd.DataFrame:
-    df = pd.read_excel(path, header=0)
+def load_xlsx(source) -> pd.DataFrame:
+    """source: file path, bytes, or file-like object."""
+    if isinstance(source, bytes):
+        source = io.BytesIO(source)
+    df = pd.read_excel(source, header=0)
     df.columns = [c.strip() for c in df.columns]
     return df
 
@@ -43,10 +46,7 @@ def import_orders_from_xlsx(df: pd.DataFrame) -> dict:
         all_ids.update(parse_order_ids(cell))
 
     fetched, skipped, errors = 0, 0, 0
-    with get_conn() as conn:
-        existing = {
-            r[0] for r in conn.execute("SELECT id FROM orders").fetchall()
-        }
+    existing = db.get_all_order_ids()
 
     for oid in all_ids:
         if oid in existing:
@@ -69,17 +69,16 @@ def import_orders_from_xlsx(df: pd.DataFrame) -> dict:
 def _product_name_map() -> dict[int, str]:
     """Build item_id → product_name map from all orders in DB."""
     mapping = {}
-    with get_conn() as conn:
-        for row in conn.execute("SELECT raw FROM orders").fetchall():
-            try:
-                raw = json.loads(row["raw"] or "{}")
-                for item in raw.get("items", []):
-                    iid = item.get("id")
-                    name = item.get("name", "")
-                    if iid and name and iid not in mapping:
-                        mapping[int(iid)] = name
-            except Exception:
-                pass
+    for raw_str in db.get_all_raws():
+        try:
+            raw = json.loads(raw_str or "{}")
+            for item in raw.get("items", []):
+                iid = item.get("id")
+                name = item.get("name", "")
+                if iid and name and iid not in mapping:
+                    mapping[int(iid)] = name
+        except Exception:
+            pass
     return mapping
 
 
@@ -91,11 +90,7 @@ def build_report(df: pd.DataFrame,
     Returns aggregated metrics per product + campaign totals.
     """
     # Load all orders from DB into a dict
-    with get_conn() as conn:
-        db_orders = {
-            r["id"]: dict(r)
-            for r in conn.execute("SELECT * FROM orders").fetchall()
-        }
+    db_orders = db.get_all_orders()
 
     # Apply date filter
     df = df.copy()
