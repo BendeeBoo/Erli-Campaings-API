@@ -22,8 +22,9 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-API_KEY = "8DC4aCXYPMuF:kg+UM9E5nb/CTtqh"
-BASE_URL = "https://erli.pl/svc/shop-api"
+# Key comes from config.json (gitignored) or the ERLI_API_KEY env var —
+# never hardcode it here, this file is in git.
+from erli_api import API_KEY, BASE_URL
 
 STATUS_LABELS = {
     "purchased": "ОПЛАЧЕН",
