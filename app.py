@@ -124,6 +124,7 @@ def index():
         "purchased": raw_stats.get("purchased") or 0,
         "cancelled": raw_stats.get("cancelled") or 0,
         "pending":   raw_stats.get("pending") or 0,
+        "returned":  raw_stats.get("returned") or 0,
         "revenue":   fmt_price(raw_stats.get("revenue") or 0),
     }
 

@@ -172,14 +172,23 @@ def get_orders(status=None, after=None, limit=200):
     return query(sql, params)
 
 
+# Kept in sync with report.RETURNED_SELLER_STATUSES — a paid order that was
+# sent back earns no money, so it must not show up as revenue.
+_RETURNED_SQL = "LOWER(COALESCE(seller_status, '')) IN " \
+                "('returned', 'returningtosender', 'returnedtosender')"
+
+
 def get_stats():
-    rows = query("""
+    rows = query(f"""
         SELECT
             COUNT(*) as total,
-            COUNT(*) FILTER (WHERE status = 'purchased') as purchased,
+            COUNT(*) FILTER (WHERE status = 'purchased'
+                             AND NOT {_RETURNED_SQL}) as purchased,
             COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled,
             COUNT(*) FILTER (WHERE status = 'pending')   as pending,
-            COALESCE(SUM(total) FILTER (WHERE status = 'purchased'), 0) as revenue
+            COUNT(*) FILTER (WHERE {_RETURNED_SQL})      as returned,
+            COALESCE(SUM(total) FILTER (WHERE status = 'purchased'
+                                        AND NOT {_RETURNED_SQL}), 0) as revenue
         FROM orders
     """)
     return rows[0] if rows else {}

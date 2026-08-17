@@ -16,6 +16,17 @@ ACCESSORY_KEYWORDS  = ["okno boczne", "okno do szklarni", "taśma", "tasma",
                         "fundament", "śruba", "sruba", "grunt", "folia"]
 
 
+# sellerStatus values meaning "the money is gone". The order still reads
+# status='purchased' — the buyer paid — but it was (or is being) sent back,
+# so it must not count towards ad revenue. The API spells these
+# inconsistently, hence the lowercase comparison.
+RETURNED_SELLER_STATUSES = {"returned", "returningtosender", "returnedtosender"}
+
+
+def is_returned(seller_status: str | None) -> bool:
+    return (seller_status or "").strip().lower() in RETURNED_SELLER_STATUSES
+
+
 def is_greenhouse(name: str) -> bool:
     n = (name or "").lower()
     # Accessory check takes priority
@@ -126,6 +137,8 @@ def build_report(df: pd.DataFrame,
         units_sold         = 0
         cancelled          = 0
         pending            = 0
+        returned           = 0
+        returned_revenue   = 0.0
         accessory_revenue  = 0.0
 
         # Pre-fill name from DB map if available
@@ -144,22 +157,35 @@ def build_report(df: pd.DataFrame,
                 pending += 1
                 continue
 
-            # status == purchased — count revenue
+            # status == purchased — split the order into greenhouses/accessories
             raw = json.loads(order.get("raw") or "{}")
+            order_gh_revenue = 0.0
+            order_gh_units   = 0
+            order_acc_revenue = 0.0
             for item in raw.get("items", []):
                 item_name = item.get("name", "")
                 qty       = item.get("quantity", 1)
                 price_pln = (item.get("unitPrice") or 0) / 100
 
                 if is_greenhouse(item_name):
-                    greenhouse_revenue += price_pln * qty
-                    units_sold         += qty
+                    order_gh_revenue += price_pln * qty
+                    order_gh_units   += qty
                     if not product_name:
                         product_name = item_name
                 else:
-                    accessory_revenue += price_pln * qty
+                    order_acc_revenue += price_pln * qty
 
-        total_purchased_revenue = greenhouse_revenue + accessory_revenue
+            # Returns are only reported per order, never per item, so a
+            # returned order is written off whole.
+            if is_returned(order.get("seller_status")):
+                returned         += 1
+                returned_revenue += order_gh_revenue
+                continue
+
+            greenhouse_revenue += order_gh_revenue
+            units_sold         += order_gh_units
+            accessory_revenue  += order_acc_revenue
+
         roas = (greenhouse_revenue / cost) if (cost > 0 and units_sold > 0) else None
         cost_per_sale = (cost / units_sold) if units_sold > 0 else None
 
@@ -173,9 +199,11 @@ def build_report(df: pd.DataFrame,
             "orders_total":       len(order_ids),
             "orders_cancelled":   cancelled,
             "orders_pending":     pending,
-            "orders_purchased":   len(order_ids) - cancelled - pending,
+            "orders_returned":    returned,
+            "orders_purchased":   len(order_ids) - cancelled - pending - returned,
             "units_sold":         units_sold,
             "greenhouse_revenue": round(greenhouse_revenue, 2),
+            "returned_revenue":   round(returned_revenue, 2),
             "accessory_revenue":  round(accessory_revenue, 2),
             "roas":               round(roas, 2) if roas is not None else None,
             "cost_per_sale":      round(cost_per_sale, 2) if cost_per_sale is not None else None,
@@ -189,6 +217,8 @@ def build_report(df: pd.DataFrame,
     total_clicks     = sum(r["clicks"] for r in rows)
     total_units      = sum(r["units_sold"] for r in rows)
     total_gh_revenue = sum(r["greenhouse_revenue"] for r in rows)
+    total_returned   = sum(r["orders_returned"] for r in rows)
+    total_ret_revenue = sum(r["returned_revenue"] for r in rows)
     total_roas       = round(total_gh_revenue / total_cost, 2) if total_cost > 0 else None
     total_cps        = round(total_cost / total_units, 2) if total_units > 0 else None
 
@@ -200,6 +230,8 @@ def build_report(df: pd.DataFrame,
             "clicks":             total_clicks,
             "units_sold":         total_units,
             "greenhouse_revenue": round(total_gh_revenue, 2),
+            "orders_returned":    total_returned,
+            "returned_revenue":   round(total_ret_revenue, 2),
             "roas":               total_roas,
             "cost_per_sale":      total_cps,
         },

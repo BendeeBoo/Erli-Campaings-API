@@ -279,7 +279,18 @@
       <div class="kpi green">
         <div class="label">Выручка (теплицы)</div>
         <div class="value">{{ "%.0f"|format(report.totals.greenhouse_revenue) }}</div>
-        <div class="sub">без отмен и ожидания оплаты</div>
+        <div class="sub">без отмен, возвратов и ожидания оплаты</div>
+      </div>
+      <div class="kpi orange">
+        <div class="label">Возвраты</div>
+        <div class="value">{{ report.totals.orders_returned }}</div>
+        <div class="sub">
+          {% if report.totals.orders_returned %}
+          на {{ "%.0f"|format(report.totals.returned_revenue) }} zł — вычтено из выручки
+          {% else %}
+          нет возвратов за период
+          {% endif %}
+        </div>
       </div>
       <div class="kpi purple">
         <div class="label">Факт. РОАС</div>
@@ -321,10 +332,11 @@
             <th class="num" onclick="sortTable(3)">Затраты <span class="si">↕</span></th>
             <th class="num" onclick="sortTable(4)">Заказов <span class="si">↕</span></th>
             <th class="num" onclick="sortTable(5)">Отмен <span class="si">↕</span></th>
-            <th class="num" onclick="sortTable(6)">Продано <span class="si">↕</span></th>
-            <th class="num" onclick="sortTable(7)">Выручка <span class="si">↕</span></th>
-            <th class="num" onclick="sortTable(8)">РОАС <span class="si">↕</span></th>
-            <th class="num" onclick="sortTable(9)">Цена прод. <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(6)">Возвратов <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(7)">Продано <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(8)">Выручка <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(9)">РОАС <span class="si">↕</span></th>
+            <th class="num" onclick="sortTable(10)">Цена прод. <span class="si">↕</span></th>
           </tr>
         </thead>
         <tbody id="det-body">
@@ -341,6 +353,10 @@
             <td class="num bold">{{ "%.2f"|format(r.cost) }} zł</td>
             <td class="num">{{ r.orders_total }}</td>
             <td class="num {% if r.orders_cancelled > 0 %}tr-bad{% endif %}">{{ r.orders_cancelled }}</td>
+            <td class="num {% if r.orders_returned > 0 %}tr-bad{% endif %}"
+                {% if r.returned_revenue > 0 %}title="Вычтено из выручки: {{ "%.0f"|format(r.returned_revenue) }} zł"{% endif %}>
+              {{ r.orders_returned }}
+            </td>
             <td class="num bold">{{ r.units_sold }}</td>
             <td class="num">{% if r.greenhouse_revenue > 0 %}{{ "%.0f"|format(r.greenhouse_revenue) }} zł{% else %}<span class="dim">—</span>{% endif %}</td>
             <td class="num">
@@ -361,6 +377,9 @@
             <td class="num">—</td>
             <td class="num">{{ "%.2f"|format(report.totals.cost) }} zł</td>
             <td class="num">—</td><td class="num">—</td>
+            <td class="num {% if report.totals.orders_returned > 0 %}tr-bad{% endif %}">
+              {{ report.totals.orders_returned }}
+            </td>
             <td class="num">{{ report.totals.units_sold }}</td>
             <td class="num">{{ "%.0f"|format(report.totals.greenhouse_revenue) }} zł</td>
             <td class="num">{% if report.totals.roas %}{{ report.totals.roas }}x{% else %}—{% endif %}</td>
