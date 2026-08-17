@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from flask import (Flask, render_template, request, jsonify,
                    redirect, url_for, session)
+from werkzeug.exceptions import HTTPException
 
 import db
 import poller
@@ -20,6 +21,8 @@ logging.basicConfig(
     format="%(asctime)s  %(name)-12s %(levelname)s  %(message)s",
     datefmt="%H:%M:%S",
 )
+
+log = logging.getLogger("app")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB
@@ -250,10 +253,39 @@ def upload_xlsx():
 
     try:
         df = rpt.load_xlsx(content)
+        dates = pd.to_datetime(df["Data"])
+        db.set_xlsx_index(f.filename, sorted(rpt.order_ids_in_xlsx(df)),
+                          str(dates.min())[:10], str(dates.max())[:10])
         result = rpt.import_orders_from_xlsx(df)
         return jsonify({"ok": True, "filename": f.filename, "orders": result})
     except Exception as e:
+        log.exception("xlsx upload failed")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/orders/fetch-missing", methods=["POST"])
+def fetch_missing_orders():
+    """Pull orders a report mentions but the DB does not have yet."""
+    name = ((request.get_json(silent=True) or {}).get("file") or "").strip()
+    if not name or name not in set(db.list_xlsx()):
+        return jsonify({"error": "Report not found"}), 404
+
+    missing = _report_order_ids(name) - db.get_all_order_ids()
+    fetched, errors = 0, 0
+    for oid in sorted(missing):
+        try:
+            order = get_order(oid)
+            if order:
+                db.upsert_order(order, source="xlsx")
+                fetched += 1
+            else:
+                errors += 1
+        except Exception:
+            log.exception(f"Fetching order {oid} failed")
+            errors += 1
+
+    return jsonify({"ok": True, "requested": len(missing),
+                    "fetched": fetched, "errors": errors})
 
 
 @app.route("/api/poller")
@@ -263,15 +295,35 @@ def api_poller():
 
 # ── Report (xlsx) deletion ───────────────────────────────────────────────────
 
-def _report_order_ids(name: str) -> set[str]:
-    """Order ids mentioned in a stored report. Unreadable file → empty set."""
+def _index_report(name: str) -> dict:
+    """
+    Order ids + period of a stored report, read from the cache written at
+    upload time. Reports uploaded before the cache existed are indexed once,
+    on first use. Unreadable file → empty index.
+    """
+    cached = db.get_xlsx_index(name)
+    if cached is not None:
+        return cached
+
     content = db.get_xlsx(name)
     if not content:
-        return set()
+        return {"order_ids": [], "from": "", "to": ""}
     try:
-        return rpt.order_ids_in_xlsx(rpt.load_xlsx(content))
+        df = rpt.load_xlsx(content)
+        ids = sorted(rpt.order_ids_in_xlsx(df))
+        dates = pd.to_datetime(df["Data"])
+        index = {"order_ids": ids,
+                 "from": str(dates.min())[:10], "to": str(dates.max())[:10]}
     except Exception:
-        return set()
+        log.exception(f"Cannot index report {name}")
+        return {"order_ids": [], "from": "", "to": ""}
+
+    db.set_xlsx_index(name, index["order_ids"], index["from"], index["to"])
+    return index
+
+
+def _report_order_ids(name: str) -> set[str]:
+    return set(_index_report(name)["order_ids"])
 
 
 def _plan_deletion(names: list[str]) -> dict:
@@ -288,21 +340,13 @@ def _plan_deletion(names: list[str]) -> dict:
     doomed_ids: set[str] = set()
     per_file = []
     for name in targets:
-        ids = _report_order_ids(name)
-        doomed_ids |= ids
-        period_from = period_to = ""
-        content = db.get_xlsx(name)
-        if content:
-            try:
-                dates = pd.to_datetime(rpt.load_xlsx(content)["Data"])
-                period_from, period_to = str(dates.min())[:10], str(dates.max())[:10]
-            except Exception:
-                pass
+        index = _index_report(name)
+        doomed_ids |= set(index["order_ids"])
         per_file.append({
             "name":   name,
-            "from":   period_from,
-            "to":     period_to,
-            "orders": len(ids),
+            "from":   index["from"],
+            "to":     index["to"],
+            "orders": len(index["order_ids"]),
         })
 
     still_referenced: set[str] = set()
@@ -328,6 +372,21 @@ def _plan_deletion(names: list[str]) -> dict:
         "orders_kept_shared": kept_shared,
         "orders_kept_manual": kept_manual,
     }
+
+
+@app.errorhandler(Exception)
+def _json_errors(exc):
+    """
+    API routes must fail as JSON. An HTML error page made the client report
+    "Ошибка сети", hiding the real cause. Also logs the traceback so it shows
+    up in the Render logs.
+    """
+    if isinstance(exc, HTTPException):
+        return exc
+    log.exception(f"Unhandled error on {request.method} {request.path}")
+    if request.path.startswith("/api/"):
+        return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
+    raise exc
 
 
 @app.route("/api/reports/preview-delete", methods=["POST"])

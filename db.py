@@ -98,10 +98,16 @@ def _migrate(conn):
     if IS_PG:
         with conn.cursor() as cur:
             cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS source TEXT")
+            for col in ("order_ids TEXT", "period_from TEXT", "period_to TEXT"):
+                cur.execute(f"ALTER TABLE xlsx_files ADD COLUMN IF NOT EXISTS {col}")
         return
     cols = {r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()}
     if "source" not in cols:
         conn.execute("ALTER TABLE orders ADD COLUMN source TEXT")
+    xcols = {r[1] for r in conn.execute("PRAGMA table_info(xlsx_files)").fetchall()}
+    for col in ("order_ids", "period_from", "period_to"):
+        if col not in xcols:
+            conn.execute(f"ALTER TABLE xlsx_files ADD COLUMN {col} TEXT")
 
 
 def init_db():
@@ -278,6 +284,34 @@ def list_xlsx_meta() -> list[dict]:
     return query(
         "SELECT name, uploaded_at FROM xlsx_files ORDER BY name DESC"
     )
+
+
+def set_xlsx_index(name: str, order_ids: list[str], period_from: str, period_to: str):
+    """
+    Cache what a report contains, so deleting one never has to parse xlsx.
+    Parsing every stored file on each delete was slow and memory-hungry.
+    """
+    execute(
+        "UPDATE xlsx_files SET order_ids = ?, period_from = ?, period_to = ? "
+        "WHERE name = ?",
+        (json.dumps(sorted(set(order_ids))), period_from, period_to, name),
+    )
+
+
+def get_xlsx_index(name: str) -> dict | None:
+    """Cached report contents, or None when it has not been indexed yet."""
+    rows = query(
+        "SELECT order_ids, period_from, period_to FROM xlsx_files WHERE name = ?",
+        (name,),
+    )
+    if not rows or rows[0]["order_ids"] is None:
+        return None
+    r = rows[0]
+    return {
+        "order_ids": json.loads(r["order_ids"]),
+        "from":      r["period_from"] or "",
+        "to":        r["period_to"] or "",
+    }
 
 
 def delete_xlsx(name: str) -> bool:

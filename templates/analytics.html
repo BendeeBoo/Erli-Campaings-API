@@ -47,6 +47,14 @@
     .del-go { padding: 6px 14px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
     .del-go:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
 
+    /* ── Missing-orders warning ── */
+    .warn-bar { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; border-radius: 10px; padding: 11px 16px; margin-bottom: 18px; display: flex; align-items: center; gap: 11px; flex-wrap: wrap; font-size: 13px; }
+    .warn-ico { font-size: 16px; }
+    .warn-btn { padding: 6px 13px; background: #d97706; color: #fff; border: none; border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .warn-btn:hover { background: #b45309; }
+    .warn-btn:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+    #fetch-missing-status { font-size: 12px; }
+
     /* ── Confirm modal ── */
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
     .modal-bg.open { display: flex; }
@@ -229,6 +237,20 @@
     </div>
   </div>
 
+  {% if report and report.missing_orders %}
+  <div class="warn-bar">
+    <span class="warn-ico">⚠</span>
+    <span>
+      В выгрузке <b>{{ report.missing_orders|length }}</b>
+      {{ 'заказ' if report.missing_orders|length == 1 else 'заказов' }},
+      которых нет в базе — выручка и продажи занижены.
+    </span>
+    <button type="button" class="warn-btn" id="fetch-missing-btn"
+            onclick="fetchMissing()">Загрузить из API</button>
+    <span id="fetch-missing-status"></span>
+  </div>
+  {% endif %}
+
   {% if report %}
 
   <!-- Date range filter -->
@@ -280,17 +302,6 @@
         <div class="label">Выручка (теплицы)</div>
         <div class="value">{{ "%.0f"|format(report.totals.greenhouse_revenue) }}</div>
         <div class="sub">без отмен, возвратов и ожидания оплаты</div>
-      </div>
-      <div class="kpi orange">
-        <div class="label">Возвраты</div>
-        <div class="value">{{ report.totals.orders_returned }}</div>
-        <div class="sub">
-          {% if report.totals.orders_returned %}
-          на {{ "%.0f"|format(report.totals.returned_revenue) }} zł — вычтено из выручки
-          {% else %}
-          нет возвратов за период
-          {% endif %}
-        </div>
       </div>
       <div class="kpi purple">
         <div class="label">Факт. РОАС</div>
@@ -481,9 +492,57 @@
     location.href = "/analytics?file=" + encodeURIComponent(f);
   }
 
+  // ── Fetch orders the xlsx mentions but the DB lacks ──
+  async function fetchMissing() {
+    const btn = document.getElementById("fetch-missing-btn");
+    const st  = document.getElementById("fetch-missing-status");
+    btn.disabled = true;
+    st.textContent = "Запрашиваю API…";
+    try {
+      const d = await postJson("/api/orders/fetch-missing", {file: SELECTED_FILE});
+      st.textContent = `✓ загружено ${d.fetched}` +
+        (d.errors ? `, не найдено в API: ${d.errors}` : "");
+      setTimeout(() => location.reload(), 900);
+    } catch (e) {
+      btn.disabled = false;
+      st.textContent = e.message;
+    }
+  }
+
   // ── Delete reports ──
   const SELECTED_FILE = {{ (selected or "")|tojson }};
   let delPlan = null;   // preview returned by the server
+
+  /**
+   * POST JSON and surface what actually went wrong. A failed request used to
+   * be reported as "Ошибка сети" even when the server answered with a 500,
+   * because one catch covered both the fetch and the JSON parsing.
+   */
+  async function postJson(url, body) {
+    let r;
+    try {
+      r = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw new Error("Сеть недоступна: " + e.message);
+    }
+    const text = await r.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* not JSON — server error page */ }
+
+    if (!r.ok) {
+      const detail = (data && data.error) || text.slice(0, 200).replace(/<[^>]*>/g, " ").trim();
+      throw new Error(`Ошибка сервера ${r.status}: ${detail || r.statusText}`);
+    }
+    if (data === null) {
+      throw new Error(`Сервер вернул не JSON (${r.status}): ${text.slice(0, 200)}`);
+    }
+    if (data.error) throw new Error(data.error);
+    return data;
+  }
 
   function delChecks() {
     return Array.from(document.querySelectorAll("#del-menu input[type=checkbox]"));
@@ -527,15 +586,15 @@
     document.getElementById("del-confirm").disabled = true;
     document.getElementById("del-modal").classList.add("open");
 
+    let d;
     try {
-      const r = await fetch("/api/reports/preview-delete", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({files}),
-      });
-      const d = await r.json();
-      if (d.error) { filesBox.textContent = "Ошибка: " + d.error; return; }
+      d = await postJson("/api/reports/preview-delete", {files});
       delPlan = d;
+    } catch (e) {
+      filesBox.textContent = e.message;
+      return;
+    }
+    {
 
       const n = d.files.length;
       document.getElementById("del-warn").textContent =
@@ -558,8 +617,6 @@
 
       renderOrdersHint();
       document.getElementById("del-confirm").disabled = false;
-    } catch {
-      filesBox.textContent = "Ошибка сети";
     }
   }
 
@@ -591,29 +648,19 @@
     btn.disabled = true;
     btn.textContent = "Удаляю…";
     try {
-      const r = await fetch("/api/reports/delete", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          files,
-          delete_orders: document.getElementById("del-orders").checked,
-        }),
+      const d = await postJson("/api/reports/delete", {
+        files,
+        delete_orders: document.getElementById("del-orders").checked,
       });
-      const d = await r.json();
-      if (d.error) {
-        btn.disabled = false; btn.textContent = "Удалить";
-        toast("Ошибка: " + d.error, 5000);
-        return;
-      }
       if (d.warnings?.length) toast("Файл не удалён с диска: " + d.warnings[0], 6000);
       // Deleting the report currently on screen clears it; otherwise stay put.
       const wipeView = files.includes(SELECTED_FILE);
       location.href = wipeView
         ? "/analytics?file="
         : "/analytics?file=" + encodeURIComponent(SELECTED_FILE);
-    } catch {
+    } catch (e) {
       btn.disabled = false; btn.textContent = "Удалить";
-      toast("Ошибка сети", 4000);
+      toast(e.message, 8000);
     }
   }
 

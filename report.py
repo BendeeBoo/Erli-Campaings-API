@@ -35,6 +35,14 @@ def is_greenhouse(name: str) -> bool:
     return any(kw in n for kw in GREENHOUSE_KEYWORDS)
 
 
+def _item_id(item: dict) -> int | None:
+    """Order line-item id, comparable with the xlsx 'ID produktu' column."""
+    try:
+        return int(item.get("id"))
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_order_ids(cell) -> list[str]:
     if pd.isna(cell) or not str(cell).strip():
         return []
@@ -119,6 +127,10 @@ def build_report(df: pd.DataFrame,
 
     name_map = _product_name_map()
 
+    # Order ids the xlsx refers to but the DB has never seen. They would
+    # silently drag every figure down, so the UI warns about them.
+    missing_orders: set[str] = set()
+
     # Aggregate xlsx by product
     rows = []
     for product_id, grp in df.groupby("ID produktu"):
@@ -140,13 +152,16 @@ def build_report(df: pd.DataFrame,
         returned           = 0
         returned_revenue   = 0.0
         accessory_revenue  = 0.0
+        no_match           = 0
 
+        pid = int(product_id)
         # Pre-fill name from DB map if available
-        product_name = name_map.get(int(product_id), "")
+        product_name = name_map.get(pid, "")
 
         for oid in order_ids:
             order = db_orders.get(oid)
             if not order:
+                missing_orders.add(oid)
                 continue
 
             status = order.get("status", "")
@@ -157,34 +172,38 @@ def build_report(df: pd.DataFrame,
                 pending += 1
                 continue
 
-            # status == purchased — split the order into greenhouses/accessories
+            # Only the line item this ad actually sold. An order listed under
+            # two products used to have its whole basket counted for each of
+            # them, turning one greenhouse into two.
             raw = json.loads(order.get("raw") or "{}")
-            order_gh_revenue = 0.0
-            order_gh_units   = 0
-            order_acc_revenue = 0.0
-            for item in raw.get("items", []):
-                item_name = item.get("name", "")
-                qty       = item.get("quantity", 1)
-                price_pln = (item.get("unitPrice") or 0) / 100
-
-                if is_greenhouse(item_name):
-                    order_gh_revenue += price_pln * qty
-                    order_gh_units   += qty
-                    if not product_name:
-                        product_name = item_name
-                else:
-                    order_acc_revenue += price_pln * qty
-
-            # Returns are only reported per order, never per item, so a
-            # returned order is written off whole.
-            if is_returned(order.get("seller_status")):
-                returned         += 1
-                returned_revenue += order_gh_revenue
+            matched = [it for it in raw.get("items", []) if _item_id(it) == pid]
+            if not matched:
+                no_match += 1
                 continue
 
-            greenhouse_revenue += order_gh_revenue
-            units_sold         += order_gh_units
-            accessory_revenue  += order_acc_revenue
+            item_revenue = 0.0
+            item_units   = 0
+            item_is_gh   = False
+            for item in matched:
+                qty = item.get("quantity", 1)
+                item_revenue += ((item.get("unitPrice") or 0) / 100) * qty
+                if is_greenhouse(item.get("name", "")):
+                    item_is_gh  = True
+                    item_units += qty
+                if not product_name:
+                    product_name = item.get("name", "")
+
+            if is_returned(order.get("seller_status")):
+                returned += 1
+                if item_is_gh:
+                    returned_revenue += item_revenue
+                continue
+
+            if item_is_gh:
+                greenhouse_revenue += item_revenue
+                units_sold         += item_units
+            else:
+                accessory_revenue  += item_revenue
 
         roas = (greenhouse_revenue / cost) if (cost > 0 and units_sold > 0) else None
         cost_per_sale = (cost / units_sold) if units_sold > 0 else None
@@ -200,6 +219,7 @@ def build_report(df: pd.DataFrame,
             "orders_cancelled":   cancelled,
             "orders_pending":     pending,
             "orders_returned":    returned,
+            "orders_no_match":    no_match,
             "orders_purchased":   len(order_ids) - cancelled - pending - returned,
             "units_sold":         units_sold,
             "greenhouse_revenue": round(greenhouse_revenue, 2),
@@ -235,6 +255,7 @@ def build_report(df: pd.DataFrame,
             "roas":               total_roas,
             "cost_per_sale":      total_cps,
         },
+        "missing_orders": sorted(missing_orders),
         "period": {
             "from": str(df["Data"].min())[:10] if len(df) else "",
             "to":   str(df["Data"].max())[:10] if len(df) else "",
