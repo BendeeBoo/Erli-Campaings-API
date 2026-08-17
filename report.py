@@ -39,11 +39,17 @@ def load_xlsx(source) -> pd.DataFrame:
     return df
 
 
-def import_orders_from_xlsx(df: pd.DataFrame) -> dict:
-    """Fetch all order IDs found in xlsx and save to DB. Returns summary."""
-    all_ids = set()
+def order_ids_in_xlsx(df: pd.DataFrame) -> set[str]:
+    """Every order id mentioned anywhere in the report."""
+    all_ids: set[str] = set()
     for cell in df["Lista zamowien"].dropna():
         all_ids.update(parse_order_ids(cell))
+    return all_ids
+
+
+def import_orders_from_xlsx(df: pd.DataFrame) -> dict:
+    """Fetch all order IDs found in xlsx and save to DB. Returns summary."""
+    all_ids = order_ids_in_xlsx(df)
 
     fetched, skipped, errors = 0, 0, 0
     existing = db.get_all_order_ids()
@@ -55,7 +61,7 @@ def import_orders_from_xlsx(df: pd.DataFrame) -> dict:
         try:
             order = get_order(oid)
             if order:
-                upsert_order(order)
+                upsert_order(order, source="xlsx")
                 fetched += 1
             else:
                 errors += 1

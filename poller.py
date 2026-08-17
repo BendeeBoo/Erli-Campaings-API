@@ -52,7 +52,7 @@ def _process_events(events: list[dict]) -> int:
         if order_id:
             order = get_order(order_id)
             if order:
-                upsert_order(order)
+                upsert_order(order, source="inbox")
                 processed += 1
                 log.info(f"Saved order {order_id} ({etype})")
 
@@ -123,7 +123,8 @@ def refresh_statuses(days: int = REFRESH_DAYS) -> dict:
             row = get_order_row(oid)
             old = (row["status"], row["seller_status"]) if row else (None, None)
             new = (order.get("status"), order.get("sellerStatus") or "")
-            upsert_order(order)
+            # source=None so a status refresh never rewrites how the order got here
+            upsert_order(order, source=None)
             checked += 1
             if old != new:
                 updated += 1

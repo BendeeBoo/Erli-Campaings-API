@@ -28,6 +28,46 @@
     .ok  { color: #16a34a !important; font-weight: 600; }
     .err { color: #dc2626 !important; font-weight: 600; }
 
+    /* ── Delete reports ── */
+    .del-wrap { position: relative; margin-left: auto; }
+    .del-btn { padding: 7px 14px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .del-btn:hover { background: #b91c1c; }
+    .del-menu { display: none; position: absolute; right: 0; top: calc(100% + 6px); background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); min-width: 340px; z-index: 200; overflow: hidden; }
+    .del-menu.open { display: block; }
+    .del-menu-head { padding: 9px 14px; font-size: 12px; font-weight: 700; color: #6b7280; border-bottom: 1px solid #f0f0f0; background: #f8fafc; }
+    .del-list { max-height: 260px; overflow-y: auto; }
+    .del-item { display: flex; align-items: flex-start; gap: 9px; padding: 9px 14px; cursor: pointer; border-bottom: 1px solid #f6f7f8; }
+    .del-item:hover { background: #f8fafc; }
+    .del-item:last-child { border-bottom: none; }
+    .del-item input { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+    .del-item .fname { font-size: 12.5px; line-height: 1.35; word-break: break-all; }
+    .del-item .fdate { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+    .del-menu-foot { padding: 10px 14px; border-top: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; gap: 10px; background: #f8fafc; }
+    .del-all { font-size: 12px; color: #2563eb; cursor: pointer; font-weight: 600; background: none; border: none; padding: 0; }
+    .del-go { padding: 6px 14px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+    .del-go:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+
+    /* ── Confirm modal ── */
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 500; align-items: center; justify-content: center; padding: 20px; }
+    .modal-bg.open { display: flex; }
+    .modal { background: #fff; border-radius: 12px; max-width: 540px; width: 100%; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.3); }
+    .modal h2 { font-size: 16px; font-weight: 700; padding: 18px 22px 12px; }
+    .modal-body { padding: 0 22px; overflow-y: auto; }
+    .modal-warn { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; border-radius: 8px; padding: 10px 13px; font-size: 12.5px; line-height: 1.5; margin-bottom: 14px; }
+    .mfile { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 13px; margin-bottom: 8px; }
+    .mfile .n { font-size: 12.5px; font-weight: 600; word-break: break-all; line-height: 1.35; }
+    .mfile .m { font-size: 11.5px; color: #6b7280; margin-top: 4px; }
+    .modal-opt { display: flex; align-items: flex-start; gap: 9px; background: #f8fafc; border-radius: 8px; padding: 11px 13px; margin: 12px 0 4px; cursor: pointer; }
+    .modal-opt input { margin-top: 2px; cursor: pointer; flex-shrink: 0; }
+    .modal-opt .t { font-size: 12.5px; font-weight: 600; }
+    .modal-opt .s { font-size: 11.5px; color: #6b7280; margin-top: 3px; line-height: 1.45; }
+    .modal-foot { padding: 14px 22px 18px; display: flex; justify-content: flex-end; gap: 9px; }
+    .btn-cancel { padding: 8px 17px; background: #fff; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-cancel:hover { background: #f8fafc; }
+    .btn-danger { padding: 8px 17px; background: #dc2626; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-danger:disabled { background: #e5e7eb; color: #9ca3af; cursor: not-allowed; }
+
     /* ── Date filter ── */
     .date-bar { background: #fff; border-radius: 10px; padding: 14px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); margin-bottom: 18px; }
     .date-bar-inner { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
@@ -125,6 +165,7 @@
     <input type="file" id="xlsx-input" accept=".xlsx" onchange="uploadFile(this)">
     {% if files %}
     <select class="file-sel" onchange="switchFile(this.value)">
+      <option value="" {% if not selected %}selected{% endif %}>— не выбран —</option>
       {% for f in files %}
       <option value="{{ f }}" {% if f == selected %}selected{% endif %}>{{ f }}</option>
       {% endfor %}
@@ -134,6 +175,58 @@
     {% if report %}
     <span class="period-badge">Данные: {{ file_min }} — {{ file_max }}</span>
     {% endif %}
+
+    {% if files %}
+    <div class="del-wrap">
+      <button type="button" class="del-btn" onclick="toggleDelMenu(event)">Удалить</button>
+      <div class="del-menu" id="del-menu">
+        <div class="del-menu-head">Выберите отчёты для удаления</div>
+        <div class="del-list">
+          {% for f in files_meta %}
+          <label class="del-item">
+            <input type="checkbox" value="{{ f.name }}" onchange="syncDelBtn()">
+            <span>
+              <span class="fname">{{ f.name }}</span>
+              {% if f.uploaded_at %}
+              <span class="fdate">загружен {{ f.uploaded_at[:10] }}</span>
+              {% endif %}
+            </span>
+          </label>
+          {% endfor %}
+        </div>
+        <div class="del-menu-foot">
+          <button type="button" class="del-all" onclick="toggleAllDel()">Выбрать все</button>
+          <button type="button" class="del-go" id="del-go" disabled onclick="openConfirm()">
+            Удалить выбранные
+          </button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Delete confirmation -->
+  <div class="modal-bg" id="del-modal" onclick="if(event.target===this) closeConfirm()">
+    <div class="modal">
+      <h2>Удаление отчётов</h2>
+      <div class="modal-body">
+        <div class="modal-warn" id="del-warn"></div>
+        <div id="del-files"></div>
+        <label class="modal-opt">
+          <input type="checkbox" id="del-orders" onchange="renderOrdersHint()">
+          <span>
+            <span class="t">Удалить также заказы из этих отчётов</span>
+            <span class="s" id="del-orders-hint"></span>
+          </span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn-cancel" onclick="closeConfirm()">Отмена</button>
+        <button type="button" class="btn-danger" id="del-confirm" onclick="doDelete()">
+          Удалить
+        </button>
+      </div>
+    </div>
   </div>
 
   {% if report %}
@@ -367,6 +460,142 @@
 
   function switchFile(f) {
     location.href = "/analytics?file=" + encodeURIComponent(f);
+  }
+
+  // ── Delete reports ──
+  const SELECTED_FILE = {{ (selected or "")|tojson }};
+  let delPlan = null;   // preview returned by the server
+
+  function delChecks() {
+    return Array.from(document.querySelectorAll("#del-menu input[type=checkbox]"));
+  }
+  function delChosen() {
+    return delChecks().filter(c => c.checked).map(c => c.value);
+  }
+  function syncDelBtn() {
+    document.getElementById("del-go").disabled = delChosen().length === 0;
+  }
+  function toggleDelMenu(e) {
+    e.stopPropagation();
+    document.getElementById("del-menu").classList.toggle("open");
+  }
+  function toggleAllDel() {
+    const boxes = delChecks();
+    const turnOn = boxes.some(c => !c.checked);
+    boxes.forEach(c => c.checked = turnOn);
+    syncDelBtn();
+  }
+  document.addEventListener("click", e => {
+    const menu = document.getElementById("del-menu");
+    if (menu && !e.target.closest(".del-wrap")) menu.classList.remove("open");
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    document.getElementById("del-menu")?.classList.remove("open");
+    closeConfirm();
+  });
+
+  async function openConfirm() {
+    const files = delChosen();
+    if (!files.length) return;
+    document.getElementById("del-menu").classList.remove("open");
+
+    const filesBox = document.getElementById("del-files");
+    filesBox.textContent = "Считаю…";
+    document.getElementById("del-warn").textContent = "";
+    document.getElementById("del-orders").checked = false;
+    document.getElementById("del-orders-hint").textContent = "";
+    document.getElementById("del-confirm").disabled = true;
+    document.getElementById("del-modal").classList.add("open");
+
+    try {
+      const r = await fetch("/api/reports/preview-delete", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({files}),
+      });
+      const d = await r.json();
+      if (d.error) { filesBox.textContent = "Ошибка: " + d.error; return; }
+      delPlan = d;
+
+      const n = d.files.length;
+      document.getElementById("del-warn").textContent =
+        `Будет безвозвратно удалено отчётов: ${n}. Файлы стираются и из базы, и с диска.`;
+
+      filesBox.innerHTML = "";
+      d.files.forEach(f => {
+        const div = document.createElement("div");
+        div.className = "mfile";
+        const name = document.createElement("div");
+        name.className = "n";
+        name.textContent = f.name;
+        const meta = document.createElement("div");
+        meta.className = "m";
+        const period = (f.from && f.to) ? `Период: ${f.from} — ${f.to}` : "Период: не определён";
+        meta.textContent = `${period}  ·  заказов в отчёте: ${f.orders}`;
+        div.append(name, meta);
+        filesBox.append(div);
+      });
+
+      renderOrdersHint();
+      document.getElementById("del-confirm").disabled = false;
+    } catch {
+      filesBox.textContent = "Ошибка сети";
+    }
+  }
+
+  function renderOrdersHint() {
+    if (!delPlan) return;
+    const hint = document.getElementById("del-orders-hint");
+    const on   = document.getElementById("del-orders").checked;
+    const kept = [];
+    if (delPlan.orders_kept_shared)
+      kept.push(`${delPlan.orders_kept_shared} останется — есть в других отчётах`);
+    if (delPlan.orders_kept_manual)
+      kept.push(`${delPlan.orders_kept_manual} останется — добавлены вручную`);
+
+    hint.textContent = on
+      ? `Будет удалено заказов: ${delPlan.orders_delete}.` +
+        (kept.length ? ` ${kept.join("; ")}.` : "")
+      : `Заказы останутся в базе. Если включить — удалится ${delPlan.orders_delete}.` +
+        (kept.length ? ` ${kept.join("; ")}.` : "");
+  }
+
+  function closeConfirm() {
+    document.getElementById("del-modal")?.classList.remove("open");
+  }
+
+  async function doDelete() {
+    const files = delChosen();
+    if (!files.length) return;
+    const btn = document.getElementById("del-confirm");
+    btn.disabled = true;
+    btn.textContent = "Удаляю…";
+    try {
+      const r = await fetch("/api/reports/delete", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          files,
+          delete_orders: document.getElementById("del-orders").checked,
+        }),
+      });
+      const d = await r.json();
+      if (d.error) {
+        btn.disabled = false; btn.textContent = "Удалить";
+        toast("Ошибка: " + d.error, 5000);
+        return;
+      }
+      if (d.warnings?.length) toast("Файл не удалён с диска: " + d.warnings[0], 6000);
+      // Deleting the report currently on screen clears it; otherwise stay put.
+      const wipeView = files.includes(SELECTED_FILE);
+      location.href = wipeView
+        ? "/analytics?file="
+        : "/analytics?file=" + encodeURIComponent(SELECTED_FILE);
+    } catch {
+      btn.disabled = false; btn.textContent = "Удалить";
+      toast("Ошибка сети", 4000);
+    }
   }
 
   // ── Filter rows ──

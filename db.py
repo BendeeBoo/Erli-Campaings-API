@@ -71,7 +71,8 @@ _SCHEMA = [
         total         BIGINT,
         created_at    TEXT,
         updated_at    TEXT,
-        raw           TEXT
+        raw           TEXT,
+        source        TEXT
     )
     """,
     """
@@ -92,6 +93,17 @@ _SCHEMA = [
 ]
 
 
+def _migrate(conn):
+    """Add columns missing in databases created by older versions."""
+    if IS_PG:
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE orders ADD COLUMN IF NOT EXISTS source TEXT")
+        return
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()}
+    if "source" not in cols:
+        conn.execute("ALTER TABLE orders ADD COLUMN source TEXT")
+
+
 def init_db():
     conn = get_conn()
     try:
@@ -102,12 +114,13 @@ def init_db():
         else:
             for stmt in _SCHEMA:
                 conn.execute(stmt)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()
 
 
-def upsert_order(order: dict):
+def upsert_order(order: dict, source: str = "xlsx"):
     items = order.get("items", [])
     products = "; ".join(
         f"{i.get('quantity', 1)}x {i.get('name', '?')}" for i in items
@@ -119,13 +132,16 @@ def upsert_order(order: dict):
     execute("""
         INSERT INTO orders
             (id, status, seller_status, buyer_name, city, products, skus,
-             total, created_at, updated_at, raw)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             total, created_at, updated_at, raw, source)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             status        = excluded.status,
             seller_status = excluded.seller_status,
             updated_at    = excluded.updated_at,
-            raw           = excluded.raw
+            raw           = excluded.raw,
+            -- keep the original source: an order added by hand must not be
+            -- downgraded to 'xlsx' just because a report later mentions it
+            source        = COALESCE(orders.source, excluded.source)
     """, (
         order.get("id"),
         order.get("status"),
@@ -138,6 +154,7 @@ def upsert_order(order: dict):
         order.get("created"),
         order.get("updated"),
         json.dumps(order, ensure_ascii=False),
+        source,
     ))
 
 
@@ -189,6 +206,35 @@ def delete_order(order_id: str) -> bool:
     return execute("DELETE FROM orders WHERE id = ?", (order_id,)) > 0
 
 
+def delete_orders(ids: list[str]) -> int:
+    """Delete the given orders by id. Returns count actually deleted."""
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    return execute(f"DELETE FROM orders WHERE id IN ({placeholders})", tuple(ids))
+
+
+def get_order_sources(ids: list[str]) -> dict[str, str]:
+    """id → source for the given orders. Missing ids are simply absent."""
+    if not ids:
+        return {}
+    placeholders = ",".join("?" * len(ids))
+    return {
+        r["id"]: (r["source"] or "xlsx")
+        for r in query(
+            f"SELECT id, source FROM orders WHERE id IN ({placeholders})", tuple(ids)
+        )
+    }
+
+
+def set_order_source(order_id: str, source: str) -> int:
+    return execute("UPDATE orders SET source = ? WHERE id = ?", (source, order_id))
+
+
+def get_orders_without_source() -> list[str]:
+    return [r["id"] for r in query("SELECT id FROM orders WHERE source IS NULL")]
+
+
 def delete_orders_before(date_iso: str) -> int:
     """Delete all orders created before the given ISO date. Returns count."""
     return execute("DELETE FROM orders WHERE created_at < ?", (date_iso,))
@@ -216,6 +262,17 @@ def list_xlsx() -> list[str]:
     return [r["name"] for r in query(
         "SELECT name FROM xlsx_files ORDER BY name DESC"
     )]
+
+
+def list_xlsx_meta() -> list[dict]:
+    """Same order as list_xlsx(), with upload timestamp for the UI."""
+    return query(
+        "SELECT name, uploaded_at FROM xlsx_files ORDER BY name DESC"
+    )
+
+
+def delete_xlsx(name: str) -> bool:
+    return execute("DELETE FROM xlsx_files WHERE name = ?", (name,)) > 0
 
 
 def get_xlsx(name: str) -> bytes | None:
