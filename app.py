@@ -34,6 +34,17 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 
 
 @app.before_request
+def _db_scope_begin():
+    # Every DB call in this request shares one connection (see db.py)
+    db.begin_request_scope()
+
+
+@app.teardown_request
+def _db_scope_end(exc):
+    db.end_request_scope()
+
+
+@app.before_request
 def require_login():
     if not APP_PASSWORD:
         return

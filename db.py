@@ -1,6 +1,8 @@
 import json
 import os
 import sqlite3
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "erli.db"
@@ -23,37 +25,103 @@ def get_conn():
     return conn
 
 
+# ── One connection per HTTP request ─────────────────────────────────────────
+# Opening a Postgres connection costs several network round trips (TCP, TLS,
+# auth). The analytics page made five of them per view; with the server and
+# the database in different regions that alone was seconds. Inside a request
+# scope every query shares one connection, opened lazily on first use and
+# closed when the request ends. Outside a scope (the poller thread, scripts)
+# each call still opens and closes its own connection.
+
+_local = threading.local()
+
+
+def begin_request_scope():
+    _local.scoped = True
+    _local.conn = None
+
+
+def end_request_scope():
+    conn = getattr(_local, "conn", None)
+    _local.scoped = False
+    _local.conn = None
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _open_shared():
+    conn = get_conn()
+    if IS_PG:
+        # Each statement commits on its own: no transaction is left idle for
+        # the rest of the request, and a failed statement cannot poison the
+        # ones after it ("current transaction is aborted").
+        conn.autocommit = True
+    return conn
+
+
+def _is_closed(conn) -> bool:
+    return bool(getattr(conn, "closed", False)) if IS_PG else False
+
+
+@contextmanager
+def _connection():
+    if getattr(_local, "scoped", False):
+        if _local.conn is None or _is_closed(_local.conn):
+            _local.conn = _open_shared()
+        try:
+            yield _local.conn
+        except Exception:
+            try:
+                _local.conn.rollback()
+            except Exception:
+                pass
+            raise
+        return
+    conn = get_conn()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _commit(conn):
+    # The shared Postgres connection runs in autocommit mode, where there is
+    # nothing to commit. Checked via IS_PG on purpose: sqlite3 connections on
+    # Python 3.12+ also have an `autocommit` attribute, and it is -1 (truthy)
+    # in the default mode — testing it would silently skip SQLite commits.
+    if IS_PG and conn.autocommit:
+        return
+    conn.commit()
+
+
 def _adapt(sql: str) -> str:
     return sql.replace("?", "%s") if IS_PG else sql
 
 
 def query(sql: str, params=()) -> list[dict]:
     """Run a SELECT, return rows as list of dicts. Works on SQLite and Postgres."""
-    conn = get_conn()
-    try:
+    with _connection() as conn:
         if IS_PG:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(_adapt(sql), params)
                 return [dict(r) for r in cur.fetchall()]
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
-    finally:
-        conn.close()
 
 
 def execute(sql: str, params=()) -> int:
     """Run an INSERT/UPDATE/DELETE, return affected row count."""
-    conn = get_conn()
-    try:
+    with _connection() as conn:
         if IS_PG:
             with conn.cursor() as cur:
                 cur.execute(_adapt(sql), params)
                 count = cur.rowcount
         else:
             count = conn.execute(sql, params).rowcount
-        conn.commit()
+        _commit(conn)
         return count
-    finally:
-        conn.close()
 
 
 BLOB_TYPE = "BYTEA" if IS_PG else "BLOB"
@@ -189,8 +257,7 @@ def upsert_orders(orders: list[dict], source: str | None) -> dict:
         )
     }
 
-    conn = get_conn()
-    try:
+    with _connection() as conn:
         sql = _adapt(_UPSERT_SQL)
         if IS_PG:
             with conn.cursor() as cur:
@@ -199,9 +266,7 @@ def upsert_orders(orders: list[dict], source: str | None) -> dict:
         else:
             for o in orders:
                 conn.execute(sql, _order_params(o, source))
-        conn.commit()
-    finally:
-        conn.close()
+        _commit(conn)
 
     new = sum(1 for i in ids if i not in before)
     changed = sum(
