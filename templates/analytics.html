@@ -628,7 +628,7 @@
     if (delPlan.orders_kept_shared)
       kept.push(`${delPlan.orders_kept_shared} останется — есть в других отчётах`);
     if (delPlan.orders_kept_manual)
-      kept.push(`${delPlan.orders_kept_manual} останется — добавлены вручную`);
+      kept.push(`${delPlan.orders_kept_manual} останется — добавлены вручную или синхронизацией`);
 
     hint.textContent = on
       ? `Будет удалено заказов: ${delPlan.orders_delete}.` +

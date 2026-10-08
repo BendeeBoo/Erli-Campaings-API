@@ -191,6 +191,7 @@
       <!-- Poller status -->
       <div class="poller-info" id="poller-info">
         Последний опрос: <span>{{ poller.last_poll }}</span><br>
+        Синхронизация: <span>{{ poller.last_sync }}</span><br>
         {% if poller.last_event != '—' %}
         Последнее событие: <span>{{ poller.last_event }}</span><br>
         {% endif %}
@@ -207,6 +208,12 @@
         <button class="btn btn-primary btn-sm" id="refresh-statuses-btn" onclick="refreshStatuses()">
           ⟳ Обновить статусы заказов
         </button>
+        <div class="add-row">
+          <input type="date" id="sync-from-date" style="flex:1;">
+          <button class="btn btn-primary btn-sm" id="sync-from-btn" onclick="syncFrom()">
+            ⇩ Загрузить с даты
+          </button>
+        </div>
         <div class="add-row">
           <input type="date" id="delete-before-date" style="flex:1;">
           <button class="btn btn-sm" style="background:#dc2626;color:#fff;" onclick="deleteBefore()">
@@ -294,23 +301,62 @@
     setTimeout(() => t.classList.remove("show"), ms);
   }
 
+  // ── Requests ──
+  // While an operation runs, the 60-second auto-reload must not cut it off.
+  let busy = 0;
+
+  /**
+   * POST JSON and surface what actually went wrong. Every handler used to
+   * catch everything as "Ошибка сети" — including a server 500 or a gunicorn
+   * timeout — so the real cause never reached the screen.
+   */
+  async function postJson(url, body) {
+    busy++;
+    try {
+      let r;
+      try {
+        r = await fetch(url, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(body ?? {}),
+        });
+      } catch (e) {
+        throw new Error("Сеть недоступна: " + e.message);
+      }
+      const text = await r.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch { /* not JSON — server error page */ }
+      if (!r.ok) {
+        const detail = (data && data.error) || text.slice(0, 200).replace(/<[^>]*>/g, " ").trim();
+        throw new Error(`Ошибка сервера ${r.status}: ${detail || r.statusText}`);
+      }
+      if (data === null) throw new Error(`Сервер вернул не JSON (${r.status})`);
+      if (data.error) throw new Error(data.error);
+      return data;
+    } finally {
+      busy--;
+    }
+  }
+
+  // Message text goes in as text, never as HTML: it may carry API output.
+  function setMsg(el, text, kind) {
+    el.textContent = "";
+    const span = document.createElement("span");
+    if (kind) span.className = kind;
+    span.textContent = text;
+    el.appendChild(span);
+  }
+
   // ── Manual inbox poll ──
   async function manualPoll() {
     const btn = document.getElementById("refresh-btn");
     btn.disabled = true; btn.textContent = "⟳ Опрос…";
     try {
-      const r = await fetch("/api/poll", {method:"POST"});
-      const d = await r.json();
-      if (d.error) { toast("Ошибка: " + d.error, 4000); }
-      else if (d.events === 0) { toast("Нет новых событий"); }
+      const d = await postJson("/api/poll");
+      if (d.events === 0) { toast("Нет новых событий"); }
       else { toast(`+${d.orders} заказов из inbox`); setTimeout(() => location.reload(), 1000); }
-
-      // Refresh poller info
-      const ps = await (await fetch("/api/poller")).json();
-      document.getElementById("poller-info").innerHTML =
-        `Последний опрос: <span>${ps.last_poll}</span><br>` +
-        (ps.last_event !== "—" ? `Последнее событие: <span>${ps.last_event}</span><br>` : "") +
-        (ps.error ? `Ошибка: <span style="color:#dc2626;">${ps.error}</span>` : "");
+    } catch (e) {
+      toast(e.message, 6000);
     } finally {
       btn.disabled = false; btn.textContent = "⟳ Обновить";
     }
@@ -321,25 +367,16 @@
     const input  = document.getElementById("order-id-input");
     const result = document.getElementById("add-result");
     const id = input.value.trim();
-    if (!id) { result.innerHTML = '<span class="err">Введите ID</span>'; return; }
+    if (!id) { setMsg(result, "Введите ID", "err"); return; }
 
-    result.innerHTML = "Загружаю…";
+    setMsg(result, "Загружаю…");
     try {
-      const r = await fetch("/api/order/add", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({id})
-      });
-      const d = await r.json();
-      if (d.error) {
-        result.innerHTML = `<span class="err">${d.error}</span>`;
-      } else {
-        result.innerHTML = `<span class="ok">✓ Заказ ${d.id} добавлен (${d.status})</span>`;
-        input.value = "";
-        setTimeout(() => location.reload(), 800);
-      }
-    } catch(e) {
-      result.innerHTML = `<span class="err">Ошибка сети</span>`;
+      const d = await postJson("/api/order/add", {id});
+      setMsg(result, `✓ Заказ ${d.id} добавлен (${d.status})`, "ok");
+      input.value = "";
+      setTimeout(() => location.reload(), 800);
+    } catch (e) {
+      setMsg(result, e.message, "err");
     }
   }
 
@@ -347,62 +384,77 @@
     if (e.key === "Enter") addOrder();
   });
 
+  function syncSummary(d) {
+    return `✓ Проверено: ${d.checked}, новых: ${d.new}, изменилось: ${d.updated}`;
+  }
+
   // ── Refresh order statuses ──
   async function refreshStatuses() {
     const btn = document.getElementById("refresh-statuses-btn");
     const res = document.getElementById("maint-result");
     btn.disabled = true; btn.textContent = "⟳ Обновляю…";
-    res.innerHTML = "Опрашиваю API по каждому заказу, это может занять до минуты…";
+    setMsg(res, "Запрашиваю изменения за 60 дней…");
     try {
-      const r = await fetch("/api/orders/refresh", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({days: 60})
-      });
-      const d = await r.json();
-      if (d.error) { res.innerHTML = `<span class="err">${d.error}</span>`; }
-      else {
-        res.innerHTML = `<span class="ok">✓ Проверено: ${d.checked}, изменилось: ${d.updated}</span>`;
-        if (d.updated > 0) setTimeout(() => location.reload(), 1200);
-      }
-    } catch { res.innerHTML = '<span class="err">Ошибка сети</span>'; }
-    finally { btn.disabled = false; btn.textContent = "⟳ Обновить статусы заказов"; }
+      const d = await postJson("/api/orders/refresh", {days: 60});
+      setMsg(res, syncSummary(d), "ok");
+      if (d.updated > 0 || d.new > 0) setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+      setMsg(res, e.message, "err");
+    } finally {
+      btn.disabled = false; btn.textContent = "⟳ Обновить статусы заказов";
+    }
+  }
+
+  // ── Load every order created since a date ──
+  (function () {
+    const d = new Date();
+    d.setDate(d.getDate() - 60);
+    document.getElementById("sync-from-date").value = d.toISOString().slice(0, 10);
+  })();
+
+  async function syncFrom() {
+    const date = document.getElementById("sync-from-date").value;
+    const btn  = document.getElementById("sync-from-btn");
+    const res  = document.getElementById("maint-result");
+    if (!date) { setMsg(res, "Выберите дату", "err"); return; }
+    btn.disabled = true;
+    setMsg(res, `Загружаю заказы с ${date}…`);
+    try {
+      const d = await postJson("/api/orders/sync", {from: date});
+      setMsg(res, syncSummary(d), "ok");
+      if (d.updated > 0 || d.new > 0) setTimeout(() => location.reload(), 1500);
+    } catch (e) {
+      setMsg(res, e.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   // ── Delete single order ──
   async function deleteOrder(id) {
     if (!confirm(`Удалить заказ ${id} из локальной базы?`)) return;
     try {
-      const r = await fetch("/api/order/delete", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({id})
-      });
-      const d = await r.json();
-      if (d.error) { toast("Ошибка: " + d.error, 3500); }
-      else { toast(`Заказ ${id} удалён`); setTimeout(() => location.reload(), 700); }
-    } catch { toast("Ошибка сети", 3500); }
+      await postJson("/api/order/delete", {id});
+      toast(`Заказ ${id} удалён`);
+      setTimeout(() => location.reload(), 700);
+    } catch (e) {
+      toast(e.message, 6000);
+    }
   }
 
   // ── Bulk delete before date ──
   async function deleteBefore() {
     const date = document.getElementById("delete-before-date").value;
     const res  = document.getElementById("maint-result");
-    if (!date) { res.innerHTML = '<span class="err">Выберите дату</span>'; return; }
+    if (!date) { setMsg(res, "Выберите дату", "err"); return; }
     if (!confirm(`Удалить из локальной базы ВСЕ заказы, созданные до ${date}?`)) return;
     try {
-      const r = await fetch("/api/orders/delete-before", {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({before: date})
-      });
-      const d = await r.json();
-      if (d.error) { res.innerHTML = `<span class="err">${d.error}</span>`; }
-      else {
-        res.innerHTML = `<span class="ok">✓ Удалено заказов: ${d.deleted}</span>`;
-        setTimeout(() => location.reload(), 1200);
-      }
-    } catch { res.innerHTML = '<span class="err">Ошибка сети</span>'; }
+      const d = await postJson("/api/orders/delete-before", {before: date});
+      setMsg(res, `✓ Удалено заказов: ${d.deleted}`, "ok");
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) {
+      setMsg(res, e.message, "err");
+    }
   }
 
   // ── Search ──
@@ -442,8 +494,8 @@
     });
   }
 
-  // ── Auto-refresh every 60s ──
-  setTimeout(() => location.reload(), 60000);
+  // ── Auto-refresh every 60s, but never in the middle of an operation ──
+  setInterval(() => { if (!busy) location.reload(); }, 60000);
 </script>
 
 </body>

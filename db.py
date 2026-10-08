@@ -126,7 +126,23 @@ def init_db():
         conn.close()
 
 
-def upsert_order(order: dict, source: str = "xlsx"):
+_UPSERT_SQL = """
+    INSERT INTO orders
+        (id, status, seller_status, buyer_name, city, products, skus,
+         total, created_at, updated_at, raw, source)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET
+        status        = excluded.status,
+        seller_status = excluded.seller_status,
+        updated_at    = excluded.updated_at,
+        raw           = excluded.raw,
+        -- keep the original source: an order added by hand must not be
+        -- downgraded to 'xlsx' just because a report later mentions it
+        source        = COALESCE(orders.source, excluded.source)
+"""
+
+
+def _order_params(order: dict, source: str | None) -> tuple:
     items = order.get("items", [])
     products = "; ".join(
         f"{i.get('quantity', 1)}x {i.get('name', '?')}" for i in items
@@ -134,21 +150,7 @@ def upsert_order(order: dict, source: str = "xlsx"):
     skus = "; ".join(i.get("sku") or "" for i in items if i.get("sku"))
     addr = order.get("user", {}).get("deliveryAddress", {})
     buyer = f"{addr.get('firstName', '')} {addr.get('lastName', '')}".strip()
-
-    execute("""
-        INSERT INTO orders
-            (id, status, seller_status, buyer_name, city, products, skus,
-             total, created_at, updated_at, raw, source)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(id) DO UPDATE SET
-            status        = excluded.status,
-            seller_status = excluded.seller_status,
-            updated_at    = excluded.updated_at,
-            raw           = excluded.raw,
-            -- keep the original source: an order added by hand must not be
-            -- downgraded to 'xlsx' just because a report later mentions it
-            source        = COALESCE(orders.source, excluded.source)
-    """, (
+    return (
         order.get("id"),
         order.get("status"),
         order.get("sellerStatus") or "",
@@ -161,7 +163,53 @@ def upsert_order(order: dict, source: str = "xlsx"):
         order.get("updated"),
         json.dumps(order, ensure_ascii=False),
         source,
-    ))
+    )
+
+
+def upsert_order(order: dict, source: str | None = "xlsx"):
+    execute(_UPSERT_SQL, _order_params(order, source))
+
+
+def upsert_orders(orders: list[dict], source: str | None) -> dict:
+    """
+    Save many orders over a single connection and report what changed.
+
+    upsert_order() opens a connection per call; for a sync of a hundred-plus
+    orders against a remote Postgres that alone ate most of the request time.
+    """
+    if not orders:
+        return {"saved": 0, "new": 0, "changed": 0}
+    ids = [o.get("id") for o in orders]
+    placeholders = ",".join("?" * len(ids))
+    before = {
+        r["id"]: (r["status"], r["seller_status"] or "")
+        for r in query(
+            f"SELECT id, status, seller_status FROM orders WHERE id IN ({placeholders})",
+            tuple(ids),
+        )
+    }
+
+    conn = get_conn()
+    try:
+        sql = _adapt(_UPSERT_SQL)
+        if IS_PG:
+            with conn.cursor() as cur:
+                for o in orders:
+                    cur.execute(sql, _order_params(o, source))
+        else:
+            for o in orders:
+                conn.execute(sql, _order_params(o, source))
+        conn.commit()
+    finally:
+        conn.close()
+
+    new = sum(1 for i in ids if i not in before)
+    changed = sum(
+        1 for o in orders
+        if o.get("id") in before
+        and before[o["id"]] != (o.get("status"), o.get("sellerStatus") or "")
+    )
+    return {"saved": len(orders), "new": new, "changed": changed}
 
 
 def get_orders(status=None, after=None, limit=200):
@@ -253,13 +301,6 @@ def get_orders_without_source() -> list[str]:
 def delete_orders_before(date_iso: str) -> int:
     """Delete all orders created before the given ISO date. Returns count."""
     return execute("DELETE FROM orders WHERE created_at < ?", (date_iso,))
-
-
-def get_order_ids_since(date_iso: str) -> list[str]:
-    """IDs of orders created on/after the given ISO date (for status refresh)."""
-    return [r["id"] for r in query(
-        "SELECT id FROM orders WHERE created_at >= ?", (date_iso,)
-    )]
 
 
 # ── xlsx files (stored in DB so they survive redeploys on cloud hosting) ────

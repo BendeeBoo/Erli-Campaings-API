@@ -79,13 +79,36 @@ def get_order(order_id: str) -> dict | None:
         raise
 
 
-def search_orders(limit=100) -> list[dict]:
+SEARCH_PAGE_SIZE = 200   # API maximum for pagination.limit
+
+
+def search_orders_since(field: str, since_iso: str):
     """
-    Fetch orders via _search. Returns 2021 data for this account
-    due to a stuck cursor — use only as fallback seed.
+    Yield pages of orders whose `field` ('created' or 'updated') is on or
+    after `since_iso`, newest first.
+
+    An empty search body makes the API start from the very first order (2021
+    for this shop), which is what once looked like a "stuck cursor". It needs
+    an explicit filter + sort; paging goes through each order's own `cursor`
+    value passed back as pagination.after.
     """
-    try:
-        result = _request("POST", "/orders/_search", {}, {"limit": limit})
-        return result if isinstance(result, list) else result.get("value", [])
-    except urllib.error.HTTPError:
-        return []
+    after = None
+    while True:
+        pagination = {"sortField": field, "order": "DESC",
+                      "limit": SEARCH_PAGE_SIZE}
+        if after:
+            pagination["after"] = after
+        page = _request("POST", "/orders/_search", {
+            "filter": {"field": field, "operator": ">=", "value": since_iso},
+            "pagination": pagination,
+        })
+        if isinstance(page, dict):
+            page = page.get("value", [])
+        if not page:
+            return
+        yield page
+        if len(page) < SEARCH_PAGE_SIZE:
+            return
+        after = page[-1].get("cursor")
+        if not after:
+            return

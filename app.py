@@ -2,7 +2,7 @@ import logging
 import threading
 import webbrowser
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 from flask import (Flask, render_template, request, jsonify,
@@ -167,11 +167,27 @@ def add_order_by_id():
 
 @app.route("/api/orders/refresh", methods=["POST"])
 def refresh_order_statuses():
-    """Re-fetch recent orders from the API and update their statuses."""
+    """Pull every order changed in the last `days` days and update it."""
     data = request.get_json(silent=True) or {}
     days = int(data.get("days", 60))
-    result = poller.refresh_statuses(days=days)
-    return jsonify(result)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    return jsonify(poller.sync_orders("updated", since))
+
+
+@app.route("/api/orders/sync", methods=["POST"])
+def sync_orders_from():
+    """
+    Load every order created on or after the given date — including the ones
+    no ad report mentions, which the xlsx import can never bring in.
+    """
+    raw = ((request.get_json(silent=True) or {}).get("from") or "").strip()
+    try:
+        since = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return jsonify({"error": "Укажите дату в формате ГГГГ-ММ-ДД"}), 400
+    if since > datetime.now(timezone.utc):
+        return jsonify({"error": "Дата в будущем"}), 400
+    return jsonify(poller.sync_orders("created", since))
 
 
 @app.route("/api/order/delete", methods=["POST"])

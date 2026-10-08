@@ -1,25 +1,30 @@
 """
-Background inbox poller.
-Runs in a daemon thread — polls ERLI /inbox every POLL_INTERVAL seconds.
-New orders/status-changes are saved to SQLite immediately.
+Background poller.
+Runs in a daemon thread:
+  - polls ERLI /inbox every POLL_INTERVAL seconds for instant events;
+  - every SYNC_INTERVAL pulls every order updated since the last sync, which
+    also catches whatever the inbox missed.
 """
 
 import threading
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 
-from erli_api import get_inbox, mark_inbox_read, get_order
-from db import upsert_order, get_sync_state, set_sync_state, get_order_ids_since
+from erli_api import get_inbox, mark_inbox_read, get_order, search_orders_since
+from db import upsert_order, upsert_orders, get_sync_state, set_sync_state
 
 log = logging.getLogger("poller")
 
-POLL_INTERVAL    = 60     # seconds between inbox checks
-REFRESH_INTERVAL = 1800   # seconds between full status refreshes (30 min)
-REFRESH_DAYS     = 60     # how far back to re-check order statuses
+POLL_INTERVAL     = 60                      # seconds between inbox checks
+SYNC_INTERVAL     = 600                     # seconds between change syncs
+SYNC_OVERLAP      = timedelta(minutes=10)   # re-read a little, never miss an edge
+FIRST_SYNC_WINDOW = timedelta(days=1)       # first auto-sync with no checkpoint
 _status = {
     "last_poll":    "never",
     "last_event":   "—",
     "events_total": 0,
+    "last_sync":    "never",
     "running":      False,
     "error":        None,
 }
@@ -101,54 +106,54 @@ def poll_once() -> dict:
         return {"events": 0, "orders": 0, "error": str(exc)}
 
 
-def refresh_statuses(days: int = REFRESH_DAYS) -> dict:
+def _api_time(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sync_orders(field: str, since: datetime) -> dict:
     """
-    Re-fetch every order created in the last `days` days from the API
-    and update its status in the DB. Returns summary.
+    Pull every order whose `field` ('created' or 'updated') is on or after
+    `since` and save it. One API request per 200 orders, one DB connection
+    per page — the old refresh made a request and two connections per order,
+    which on Render ran into gunicorn's timeout.
     """
-    from datetime import datetime, timezone, timedelta
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)) \
-        .strftime("%Y-%m-%dT00:00:00Z")
+    totals = {"checked": 0, "new": 0, "updated": 0, "pages": 0}
+    for page in search_orders_since(field, _api_time(since)):
+        # source='sync' keeps these orders out of report deletion: they are
+        # real shop orders, not something a report brought in
+        r = upsert_orders(page, source="sync")
+        totals["checked"] += r["saved"]
+        totals["new"]     += r["new"]
+        totals["updated"] += r["changed"]
+        totals["pages"]   += 1
+    log.info(f"Sync by {field} since {_api_time(since)}: {totals}")
+    return totals
 
-    ids = get_order_ids_since(cutoff)
-    checked, updated, errors = 0, 0, 0
 
-    from db import get_order_row
-    for oid in ids:
-        try:
-            order = get_order(oid)
-            if not order:
-                errors += 1
-                continue
-            row = get_order_row(oid)
-            old = (row["status"], row["seller_status"]) if row else (None, None)
-            new = (order.get("status"), order.get("sellerStatus") or "")
-            # source=None so a status refresh never rewrites how the order got here
-            upsert_order(order, source=None)
-            checked += 1
-            if old != new:
-                updated += 1
-                log.info(f"Status change {oid}: {old} → {new}")
-        except Exception as exc:
-            errors += 1
-            log.warning(f"Refresh failed for {oid}: {exc}")
-
-    log.info(f"Status refresh: {checked} checked, {updated} changed, {errors} errors")
-    return {"checked": checked, "updated": updated, "errors": errors}
+def sync_changes() -> dict:
+    """Pull everything changed since the previous run (auto-sync)."""
+    started = datetime.now(timezone.utc)
+    last = get_sync_state("last_sync_updated")
+    since = datetime.fromisoformat(last) if last else started - FIRST_SYNC_WINDOW
+    result = sync_orders("updated", since - SYNC_OVERLAP)
+    set_sync_state("last_sync_updated", started.isoformat())
+    _update(last_sync=started.strftime("%d.%m.%Y %H:%M:%S"))
+    return result
 
 
 def _loop():
     _update(running=True)
     log.info("Inbox poller started")
-    last_refresh = 0.0
+    last_sync = 0.0
     while True:
         poll_once()
-        if time.time() - last_refresh >= REFRESH_INTERVAL:
+        if time.time() - last_sync >= SYNC_INTERVAL:
             try:
-                refresh_statuses()
+                sync_changes()
             except Exception as exc:
-                log.error(f"Auto-refresh error: {exc}")
-            last_refresh = time.time()
+                log.error(f"Auto-sync error: {exc}")
+                _update(error=f"sync: {exc}")
+            last_sync = time.time()
         time.sleep(POLL_INTERVAL)
 
 
